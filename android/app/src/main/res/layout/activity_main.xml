@@ -1,0 +1,135 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/surface"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="20dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/app_name"
+            android:textColor="@color/ink"
+            android:textSize="24sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:id="@+id/statusText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:text="@string/status_not_linked"
+            android:textColor="@color/ink_muted" />
+
+        <!-- Pairing -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/link_to_dashboard"
+            android:textColor="@color/ink"
+            android:textStyle="bold" />
+
+        <EditText
+            android:id="@+id/serverUrl"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/server_url_hint"
+            android:inputType="textUri"
+            android:fontFamily="monospace"
+            android:textSize="13sp" />
+
+        <EditText
+            android:id="@+id/pairCode"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/pair_code_hint"
+            android:inputType="text"
+            android:fontFamily="monospace"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/linkButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/link_agent" />
+
+        <!-- Tracking -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/tracking"
+            android:textColor="@color/ink"
+            android:textStyle="bold" />
+
+        <Switch
+            android:id="@+id/trackingSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/start_tracking" />
+
+        <Switch
+            android:id="@+id/lostSwitch"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="@string/lost_mode" />
+
+        <TextView
+            android:id="@+id/lastLocation"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/no_fix_yet"
+            android:fontFamily="monospace"
+            android:textColor="@color/ink_muted"
+            android:textSize="13sp" />
+
+        <!-- Offline vault -->
+        <TextView
+            android:id="@+id/vaultStatus"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/vault_bg"
+            android:padding="10dp"
+            android:text="@string/vault_empty"
+            android:textColor="@color/ink"
+            android:textSize="12sp" />
+
+        <!-- Webcam -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/webcam"
+            android:textColor="@color/ink"
+            android:textStyle="bold" />
+
+        <Button
+            android:id="@+id/webcamButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/capture_webcam" />
+
+        <ImageView
+            android:id="@+id/webcamPreview"
+            android:layout_width="match_parent"
+            android:layout_height="200dp"
+            android:layout_marginTop="8dp"
+            android:contentDescription="@string/webcam_preview"
+            android:scaleType="centerCrop" />
+
+    </LinearLayout>
+</ScrollView>

@@ -1,0 +1,13 @@
+{
+  "name": "tracknaija-sync-server",
+  "version": "0.1.0",
+  "description": "TrackNaija local sync server — pairs desktop agents with the web dashboard, relays fixes, evidence and remote commands",
+  "private": true,
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check storage.js && node --check push.js"
+  },
+  "optionalDependencies": {
+    "pg": "^8.13.1"
+  }
+}

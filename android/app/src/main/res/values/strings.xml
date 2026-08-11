@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TrackNaija Agent</string>
+    <string name="notification_title">TrackNaija protecting this phone</string>
+    <string name="notification_body">Location is being monitored while tracking is on</string>
+    <string name="channel_name">Device tracking</string>
+    <string name="permission_needed">Location permission is required for tracking. Please grant it.</string>
+    <string name="status_linked">Linked as %1$s… — fixes stream to your dashboard</string>
+    <string name="status_not_linked">Not linked — enter a pairing code from the dashboard</string>
+    <string name="link_to_dashboard">Link to dashboard</string>
+    <string name="server_url_hint">Sync server URL (e.g. http://192.168.1.100:4173)</string>
+    <string name="pair_code_hint">Pairing code, e.g. TN-1234-5678</string>
+    <string name="link_agent">Link agent</string>
+    <string name="fill_pairing">Enter the server URL and pairing code first.</string>
+    <string name="linked_ok">Linked! Tracking can now start.</string>
+    <string name="link_failed">Pairing failed — check the code and that the server is running.</string>
+    <string name="tracking">Tracking</string>
+    <string name="start_tracking">Start location tracking (foreground service)</string>
+    <string name="lost_mode">Lost mode (fast polling)</string>
+    <string name="no_fix_yet">No location fix yet</string>
+    <string name="last_location">Last fix: %1$f, %2$f · source %3$s</string>
+    <string name="webcam">Webcam evidence</string>
+    <string name="capture_webcam">Capture webcam photo</string>
+    <string name="webcam_preview">Webcam capture preview</string>
+    <string name="captured">Evidence captured and uploaded.</string>
+    <string name="capture_failed">Could not capture the webcam.</string>
+    <string name="vault_status">Offline vault: %1$d pending (%2$d evidence) — auto-syncs the moment this phone touches any network (Wi-Fi or new SIM data)</string>
+    <string name="vault_empty">Offline vault: empty — captured evidence is stored locally even without data and uploaded when the phone reconnects</string>
+</resources>

@@ -1,0 +1,56 @@
+# Dependencies
+node_modules/
+
+# Next.js
+web/.next/
+web/out/
+web/build/
+next-env.d.ts
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Flutter / Dart
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.packages
+mobile/.pub-cache/
+mobile/.pub/
+mobile/android/.gradle/
+mobile/ios/Pods/
+mobile/ios/.symlinks/
+mobile/ios/Flutter/ephemeral/
+mobile/linux/flutter/ephemeral/
+mobile/macos/Flutter/ephemeral/
+mobile/windows/flutter/ephemeral/
+mobile/*.iml
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+npm-debug.log*
+
+# Android Gradle artifacts + machine-local config
+android/.gradle/
+android/build/
+android/app/build/
+android/.kotlin/
+android/local.properties
+android/captures/
+
+# Distributable binaries — attach to GitHub Releases instead of the repo
+android/dist/
+desktop/dist/
+
+# Runtime data (server writes this in file-storage mode)
+server/data.json

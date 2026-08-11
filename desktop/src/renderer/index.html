@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com"
+    />
+    <title>TrackNaija Agent</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700&family=Fira+Code:wght@400;600&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span class="brand-name">Track<span class="brand-accent">Naija</span> Agent</span>
+      </div>
+      <div class="topbar-right">
+        <span id="status-chip" class="chip chip-success">● Agent running</span>
+      </div>
+    </header>
+
+    <!-- Owner alerts (phone reconnects, SIM changes) pushed from main.js -->
+    <div id="alert-banner" class="alert-banner hidden" role="alert">
+      <span id="alert-banner-dot" class="alert-banner-dot" aria-hidden="true"></span>
+      <span id="alert-banner-text" class="alert-banner-text"></span>
+      <button id="alert-banner-dismiss" class="alert-banner-dismiss" aria-label="Dismiss alert">✕</button>
+    </div>
+
+    <main class="layout">
+      <!-- Device card -->
+      <section class="card">
+        <div class="card-head">
+          <h2>This machine</h2>
+          <span id="device-platform" class="chip chip-blue">—</span>
+        </div>
+        <dl class="kv">
+          <div><dt>Hostname</dt><dd id="device-hostname" class="mono">…</dd></div>
+          <div><dt>Serial number</dt><dd id="device-serial" class="mono">…</dd></div>
+          <div><dt>OS / release</dt><dd id="device-os" class="mono">…</dd></div>
+          <div><dt>User</dt><dd id="device-user" class="mono">…</dd></div>
+          <div><dt>CPU / RAM</dt><dd id="device-specs" class="mono">…</dd></div>
+          <div><dt>Uptime</dt><dd id="device-uptime" class="mono">…</dd></div>
+        </dl>
+      </section>
+
+      <!-- Location / signal ladder -->
+      <section class="card">
+        <div class="card-head">
+          <h2>Signal ladder</h2>
+          <button id="btn-track" class="btn btn-secondary btn-sm">Locate now</button>
+        </div>
+
+        <div id="map" class="map" aria-label="location map placeholder">
+          <span id="map-pin" class="map-pin" aria-hidden="true"></span>
+          <span id="map-coords" class="map-coords mono">no fix yet</span>
+        </div>
+
+        <div class="ladder">
+          <div class="ladder-row" data-source="wifi">
+            <span class="ladder-icon wifi"></span>
+            <div class="ladder-body">
+              <p class="ladder-title">Wi-Fi positioning</p>
+              <p id="ladder-wifi-detail" class="ladder-detail">No scan yet</p>
+            </div>
+            <span class="ladder-dot" id="dot-wifi"></span>
+          </div>
+          <div class="ladder-row" data-source="ip">
+            <span class="ladder-icon ip"></span>
+            <div class="ladder-body">
+              <p class="ladder-title">IP geolocation</p>
+              <p id="ladder-ip-detail" class="ladder-detail">No lookup yet</p>
+            </div>
+            <span class="ladder-dot" id="dot-ip"></span>
+          </div>
+          <div class="ladder-row" data-source="last_known">
+            <span class="ladder-icon history"></span>
+            <div class="ladder-body">
+              <p class="ladder-title">Last known fix</p>
+              <p id="ladder-last-detail" class="ladder-detail">None stored</p>
+            </div>
+            <span class="ladder-dot" id="dot-last"></span>
+          </div>
+        </div>
+
+        <p id="fix-meta" class="meta">Waiting for a location fix…</p>
+      </section>
+
+      <!-- Anti-theft -->
+      <section class="card">
+        <div class="card-head">
+          <h2>Anti-theft</h2>
+        </div>
+
+        <label class="switch-row">
+          <span>
+            <strong>Lost mode</strong>
+            <small>Fast locate + webcam armed the moment the laptop is used</small>
+          </span>
+          <input id="lost-toggle" type="checkbox" class="switch" />
+        </label>
+
+        <div class="btn-grid">
+          <button id="btn-webcam" class="btn btn-ghost">
+            <span class="icon-cam"></span> Capture webcam
+          </button>
+          <button id="btn-alarm" class="btn btn-ghost">
+            <span class="icon-alarm"></span> Play loud alarm
+          </button>
+          <button id="btn-lock" class="btn btn-ghost">
+            <span class="icon-lock"></span> Lock screen
+          </button>
+        </div>
+
+        <div id="webcam" class="webcam hidden">
+          <video id="webcam-video" autoplay playsinline muted></video>
+          <canvas id="webcam-canvas" class="hidden"></canvas>
+          <div class="webcam-actions">
+            <button id="btn-shoot" class="btn btn-secondary btn-sm">Snap photo</button>
+            <button id="btn-cam-off" class="btn btn-ghost btn-sm">Stop</button>
+          </div>
+        </div>
+        <p id="webcam-note" class="meta hidden">
+          Photo captured as evidence — uploaded to your dashboard now (or stored in the offline vault until this machine reconnects).
+        </p>
+      </section>
+
+      <!-- Link to dashboard -->
+      <section class="card">
+        <div class="card-head">
+          <h2>Link to dashboard</h2>
+          <span id="link-status" class="chip chip-blue">Not linked</span>
+        </div>
+        <p class="meta">
+          Point this agent at your TrackNaija sync server, then enter the pairing code shown on the
+          dashboard's Agents page. Linked agents stream fixes and evidence to the dashboard.
+        </p>
+        <div class="link-row">
+          <input id="server-url" class="input mono" value="http://localhost:4173" aria-label="Sync server URL" />
+          <input id="pair-code" class="input mono" placeholder="Pairing code, e.g. TN-1234-5678" aria-label="Pairing code" />
+        </div>
+        <div class="btn-grid">
+          <button id="btn-server" class="btn btn-ghost">Test server</button>
+          <button id="btn-link" class="btn btn-secondary">Link agent</button>
+        </div>
+        <p id="link-note" class="meta"></p>
+      </section>
+
+      <!-- Sync / settings -->
+      <section class="card">
+        <div class="card-head">
+          <h2>Sync & settings</h2>
+        </div>
+        <label class="switch-row">
+          <span>
+            <strong>Start with Windows / macOS / Linux</strong>
+            <small>Re-arm protection automatically after reboot (optional)</small>
+          </span>
+          <input id="autostart-toggle" type="checkbox" class="switch" />
+        </label>
+        <p id="vault-status" class="meta">Offline vault: —</p>
+        <p id="sync-note" class="meta">Linked agents stream fixes and evidence to your dashboard. Fixes captured while this machine has no internet are stored locally and uploaded the moment it reconnects.</p>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span>Tracks only this machine, with your consent — NDPA 2023</span>
+      <span id="last-update" class="mono">—</span>
+    </footer>
+
+    <script src="app.js"></script>
+  </body>
+</html>

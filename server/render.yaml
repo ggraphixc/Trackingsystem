@@ -1,0 +1,36 @@
+# Render blueprint for the TrackNaija sync server.
+#
+# Deploy: push this repo to GitHub, then in Render → New → Blueprint, pick
+# the repo. Render reads this file and provisions the service. Then set the
+# blank env vars (DATABASE_URL, SMS credentials) in the Render dashboard.
+#
+# See docs/DEPLOY.md for the full walkthrough.
+services:
+  - type: web
+    name: tracknaija-sync
+    runtime: docker
+    plan: free
+    dockerfilePath: ./server/Dockerfile
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      # Required for hosted deploys — the Dockerfile already sets these, but
+      # being explicit here makes the blueprint self-documenting.
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 4173
+      # Neon Postgres connection string (optional — unset keeps the JSON file).
+      - key: DATABASE_URL
+        sync: false
+      # SMS fallback alerts — configure ONE provider (see docs/DEPLOY.md).
+      - key: TWILIO_ACCOUNT_SID
+        sync: false
+      - key: TWILIO_AUTH_TOKEN
+        sync: false
+      - key: TWILIO_PHONE_NUMBER
+        sync: false
+      - key: TERMII_API_KEY
+        sync: false
+      - key: TERMII_FROM
+        sync: false
