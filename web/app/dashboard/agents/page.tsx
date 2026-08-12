@@ -17,6 +17,7 @@ import {
   registerAccount,
   resetPassword,
   registerPair,
+  forgetDevice,
   runPurge,
   saveSettings,
   sendCommand,
@@ -43,6 +44,7 @@ import {
   SignalIcon,
   UserIcon,
   WifiIcon,
+  XMarkIcon,
 } from "@/components/icons";
 import { Card, SectionTitle } from "@/components/ui";
 
@@ -68,6 +70,9 @@ export default function AgentsPage() {
   const [toast, setToast] = useState("");
   const [pendingCmd, setPendingCmd] = useState<string | null>(null);
   const [pendingLost, setPendingLost] = useState<string | null>(null);
+  // Two-click confirmation: first click arms the button (4 s window), second
+  // click executes — forgetting a device is irreversible.
+  const [confirmForget, setConfirmForget] = useState<string | null>(null);
   const [settings, setSettings] = useState<ServerSettings | null>(null);
   const [smsPhone, setSmsPhone] = useState("");
   const [smsBusy, setSmsBusy] = useState(false);
@@ -236,6 +241,28 @@ export default function AgentsPage() {
       load();
     } else {
       setToast("Could not update lost status — server offline?");
+      setTimeout(() => setToast(""), 4000);
+    }
+  }
+
+  async function askForget(device: PairedDevice) {
+    // First click arms the confirmation; second click executes.
+    if (confirmForget !== device.deviceId) {
+      setConfirmForget(device.deviceId);
+      setTimeout(
+        () => setConfirmForget((c) => (c === device.deviceId ? null : c)),
+        4000,
+      );
+      return;
+    }
+    setConfirmForget(null);
+    const res = await forgetDevice(device.deviceId);
+    if (res?.ok) {
+      setToast(`${device.hostname ?? "Device"} forgotten — removed from your account.`);
+      setTimeout(() => setToast(""), 4000);
+      load();
+    } else {
+      setToast("Could not forget device — server offline?");
       setTimeout(() => setToast(""), 4000);
     }
   }
@@ -896,6 +923,20 @@ export default function AgentsPage() {
                     Open recovery view
                   </Link>
                 ) : null}
+                <button
+                  className={`mt-3 flex w-full items-center justify-center gap-1.5 rounded-xl border px-3 py-2 text-xs font-semibold transition-colors duration-200 ${
+                    confirmForget === d.deviceId
+                      ? "border-red-600 bg-red-600 text-white hover:bg-red-700"
+                      : "border-slate-200 text-ink-faint hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                  }`}
+                  disabled={pendingLost === d.deviceId}
+                  onClick={() => askForget(d)}
+                >
+                  <XMarkIcon className="h-3.5 w-3.5" />
+                  {confirmForget === d.deviceId
+                    ? "Click again to confirm — removes all data"
+                    : "Forget device"}
+                </button>
                 <p className="mt-2 text-[11px] text-ink-faint">
                   {d.commandCount} command{d.commandCount === 1 ? "" : "s"} queued · {d.evidenceCount}{" "}
                   evidence photo{d.evidenceCount === 1 ? "" : "s"}

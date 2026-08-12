@@ -212,6 +212,17 @@ export async function verifyDevice(
   return req<{ ok: boolean; verifiedAt?: string }>(`/api/devices/${deviceId}/verify`, {});
 }
 
+/**
+ * Permanently remove a device from the account (test devices, retired
+ * agents, hardware sold outside Dravex). Irreversible — clears the stolen
+ * registry, listing, alerts and all stored data.
+ */
+export async function forgetDevice(
+  deviceId: string,
+): Promise<{ ok: boolean } | null> {
+  return req<{ ok: boolean }>(`/api/devices/${deviceId}/forget`, {});
+}
+
 /** Owner sets the one-way message shown to a finder of this device. */
 export async function setRecoveryMessage(
   deviceId: string,

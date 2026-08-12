@@ -292,6 +292,7 @@ Zero-dependency Node HTTP server; dual-mode storage (JSON file ↔ Postgres when
 | `POST /api/devices/:id/lost` | owner | lost/found + recovery code + registry |
 | `POST /api/devices/:id/verify` | owner | **Verified → Recovered** lifecycle step (resolves registry, `recovered` event) |
 | `POST /api/devices/:id/transfer` | owner | ownership handover — rotate credential, clear registry, fresh pairing code |
+| `POST /api/devices/:id/forget` | owner | permanently remove a device + its registry/listing/alerts (test devices, sold-off hardware) |
 | `PUT /api/devices/:id/recovery-message` | owner | one-way message shown to a finder |
 | `POST /api/devices/:id/contact` | public (rate-limited) | anonymous finder→owner message (only stored while lost) |
 | `POST /api/geolocate` | owner/device | BSSID fingerprint → real coordinate (Google/Mozilla, cached; 501 honest when unconfigured) |

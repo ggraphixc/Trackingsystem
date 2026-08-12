@@ -1863,6 +1863,29 @@ async function route(req, res) {
       return json(res, 200, { ok: true, verifiedAt: dev.verifiedAt });
     }
 
+    // POST /api/devices/:id/forget — owner permanently removes a device from
+    // the account (test devices, retired agents, hardware sold outside Dravex).
+    // Clears its stolen-registry entries, verified-resale listing, alerts and
+    // all stored data. Irreversible — the dashboard confirms before calling.
+    if (action === "forget" && isPost) {
+      if (!requireOwnerOf(req, res, dev)) return;
+      store.stolen = (store.stolen || []).filter((e) => e.deviceId !== dev.deviceId);
+      delete store.listings[dev.deviceId];
+      // Kill any outstanding pairing codes for this device: the device()
+      // getter lazily re-creates a missing device on claim, so a stale code
+      // would otherwise resurrect the forgotten device with a fresh token.
+      for (const [code, id] of Object.entries(store.pairCodes || {})) {
+        if (id === dev.deviceId) delete store.pairCodes[code];
+      }
+      delete store.devices[dev.deviceId];
+      // Privacy: evidence and alert history go with the device. The persisted
+      // deliveryLog keeps its entries deliberately — it is an append-only
+      // audit trail of what was delivered, not recoverable device data.
+      store.alerts = (store.alerts || []).filter((a) => a.deviceId !== dev.deviceId);
+      saveStore();
+      return json(res, 200, { ok: true });
+    }
+
     // PUT /api/devices/:id/recovery-message { message, contactPreference? }
     // — owner sets the one-way message shown to a good samaritan who finds
     // the device (never reveals the owner's identity to the public).

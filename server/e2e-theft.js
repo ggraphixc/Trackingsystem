@@ -361,6 +361,7 @@ async function scenarioD(client, deviceId) {
   // D2 — N5: verified resale listing (only transferred devices can be listed).
   const transfer = await api(`/api/devices/${deviceId}/transfer`, {});
   if (!transfer.ok) throw new Error("D2: transfer failed");
+  const transferCode = transfer.code; // hoisted for D5: must die with the device
   const list = await api("/api/listings", { deviceId, price: 125000, condition: "Good" });
   if (!list.ok) throw new Error("D2: listing failed");
   const browse = await api("/api/listings");
@@ -391,6 +392,20 @@ async function scenarioD(client, deviceId) {
   const stats = await api("/api/stats");
   if (!stats.ok || typeof stats.protected !== "number" || stats.protected < 1) throw new Error("D4: stats broken");
   console.log(`[D4] public stats: protected=${stats.protected} recovered=${stats.recovered} sighted=${stats.sighted} listings=${stats.listings} ✓`);
+
+  // D5 — forget device: the owner permanently removes the device; its
+  // registry entries, listing and alerts go with it (test devices, retired
+  // agents, hardware sold outside Dravex).
+  const forget = await api(`/api/devices/${deviceId}/forget`, {});
+  if (!forget.ok) throw new Error("D5: forget failed");
+  const after = await api("/api/devices");
+  if (after.some((d) => d.deviceId === deviceId)) throw new Error("D5: device still listed after forget");
+  // The pairing code issued at transfer must be dead too: claiming it must
+  // NOT resurrect the forgotten device (lazy device() getter regression).
+  const stale = new SyncClient(BASE);
+  const staleClaim = await stale.claim(transferCode, { hostname: "GHOST", platform: "win32" });
+  if (staleClaim && staleClaim.deviceId) throw new Error("D5: stale pairing code resurrected the device");
+  console.log("[D5] device forgotten — removed from devices, registry, listings, alerts and pair codes ✓");
   return true;
 }
 

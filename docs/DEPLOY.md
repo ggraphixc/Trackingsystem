@@ -117,9 +117,16 @@ to the server console — handy for testing).
    otherwise long SMS can fall back to the shared number and delivery is slower.
 
 ### Termii (Nigeria-native, cheaper NGN pricing, DND-friendly)
-1. https://termii.com → sign up, get an API key, configure a sender ID
-   (e.g. `Dravex`).
-2. Env vars: `TERMII_API_KEY`, `TERMII_FROM`.
+1. https://termii.com → sign up, get an API key.
+2. **Sender ID:** create one in the Termii dashboard (e.g. `Dravex`) and **wait for
+   it to be approved** — the server sends on the `dnd` channel so alerts reach
+   DND-registered numbers, and Termii rejects unapproved sender IDs on that
+   channel with `status: "error"`.
+3. Env vars: `TERMII_API_KEY`, `TERMII_FROM` (the approved sender ID).
+4. Check: hit the dashboard **Agents page → SMS fallback alerts → Send test SMS**.
+   The card shows the provider + last result, so a rejection is visible instantly.
+   While `TERMII_FROM` is unset the server stays in **log mode** — alerts still
+   flow to push + webhook, only the SMS leg is skipped.
 
 Then, in the dashboard **Agents page → SMS fallback alerts**, enter the owner's phone
 (`+234...`) and hit *Save & enable* + *Send test SMS*. The server texts that number on

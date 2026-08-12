@@ -86,6 +86,19 @@ class SyncClient(private val serverUrl: String, private val deviceToken: String?
         ) != null
 
     /**
+     * Finder channel (M4): a good samaritan holding this lost phone can send
+     * the owner ONE anonymous message through the recovery page shown on this
+     * very device. Server-side rate-limited; the sender's identity is never
+     * recorded — only the message text lands in the owner's alerts.
+     */
+    suspend fun postContactMessage(deviceId: String, message: String): Boolean =
+        request(
+            "POST",
+            "/api/devices/$deviceId/contact",
+            JSONObject().put("message", message),
+        ) != null
+
+    /**
      * Community relay: this phone heard another Dravex phone's BLE beacon
      * and reports it with our GPS position. Anonymous — the server resolves
      * the beacon to a device internally and never leaks whether it was known.
