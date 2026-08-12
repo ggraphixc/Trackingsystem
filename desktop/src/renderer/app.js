@@ -1,4 +1,4 @@
-/* TrackNaija Agent — renderer logic (runs inside Electron, uses the preload bridge). */
+/* TrackNaija — tracking dashboard renderer (Electron, preload bridge). */
 (function () {
   const api = window.tracknaija;
   if (!api) {
@@ -9,8 +9,54 @@
 
   const $ = (id) => document.getElementById(id);
   let state = {};
+  let devices = [];
+  let alerts = [];
 
-  /* ---------- init ---------- */
+  /* ================= navigation ================= */
+
+  const VIEW_META = {
+    overview: { title: "Overview", sub: "Live tracking at a glance" },
+    devices: { title: "Devices", sub: "Every phone and laptop you protect" },
+    finder: { title: "Find nearby", sub: "Bluetooth relay — hear lost beacons" },
+    alerts: { title: "Alerts", sub: "Reconnects, SIM changes, sightings" },
+    settings: { title: "Settings", sub: "Server link, sync and protection" },
+  };
+
+  function switchView(name) {
+    document.querySelectorAll(".view").forEach((v) => v.classList.remove("active"));
+    document.querySelectorAll(".nav-item").forEach((n) => n.classList.remove("active"));
+    const view = document.getElementById("view-" + name);
+    if (view) view.classList.add("active");
+    const item = document.querySelector(`.nav-item[data-view="${name}"]`);
+    if (item) item.classList.add("active");
+    const meta = VIEW_META[name] || VIEW_META.overview;
+    $("view-title").textContent = meta.title;
+    $("view-subtitle").textContent = meta.sub;
+    if (name === "devices") refreshDevices();
+    if (name === "alerts") refreshAlerts();
+  }
+
+  function renderNavBadges() {
+    const lostCount = devices.filter((d) => d.lost).length;
+    const badge = $("devices-badge");
+    if (lostCount > 0) {
+      badge.textContent = lostCount;
+      badge.classList.add("nav-badge-danger");
+      badge.classList.remove("hidden");
+    } else {
+      badge.classList.add("hidden");
+    }
+    const unread = alerts.filter((a) => !a.read).length;
+    const ac = $("alert-count");
+    if (unread > 0) {
+      ac.textContent = unread;
+      ac.classList.remove("hidden");
+    } else {
+      ac.classList.add("hidden");
+    }
+  }
+
+  /* ================= init ================= */
 
   async function init() {
     state = (await api.getState()) || {};
@@ -19,17 +65,9 @@
     $("device-hostname").textContent = info.hostname;
     $("device-serial").textContent = info.serialNumber || "—";
     $("device-os").textContent = `${info.platformLabel} ${info.release}`;
-    $("device-user").textContent = info.username || "—";
     $("device-specs").textContent = `${info.cpu} · ${info.totalMemGb} GB`;
     $("device-uptime").textContent = `${info.uptimeH} h`;
     $("device-platform").textContent = info.platformLabel;
-
-    // Serial number is the link key to the web dashboard vault.
-    if (info.serialNumber && info.serialNumber !== "Unknown (run as admin for full access)") {
-      $("device-serial").classList.add("mono");
-      $("sync-note").textContent =
-        "Serial number captured — link this machine to your dashboard account to enable remote commands (Phase 2).";
-    }
 
     $("lost-toggle").checked = !!state.lostMode;
     $("autostart-toggle").checked = !!state.autoStart;
@@ -40,10 +78,14 @@
     wireEvents();
     refreshLinkStatus();
     refreshVault();
+    refreshDevices();
+    refreshAlerts();
+
     setInterval(refreshVault, 30000);
+    setInterval(refreshDevices, 20000); // devices stay live in the background
   }
 
-  /* ---------- offline vault ---------- */
+  /* ================= offline vault ================= */
 
   async function refreshVault() {
     const v = (await api.vaultStatus()) || { pending: 0, evidence: 0 };
@@ -53,7 +95,7 @@
         : "Offline vault: empty — captured fixes and evidence are stored locally without internet and uploaded on reconnect.";
   }
 
-  /* ---------- link to dashboard ---------- */
+  /* ================= link to dashboard ================= */
 
   async function refreshLinkStatus() {
     const status = (await api.linkStatus()) || {};
@@ -63,7 +105,7 @@
       chip.textContent = "Linked";
       chip.className = "chip chip-success";
       $("link-note").textContent =
-        "Linked as " + status.deviceId.slice(0, 8) + " — fixes and evidence stream to the dashboard.";
+        "Linked as " + String(status.deviceId || "").slice(0, 8) + " — fixes, evidence and commands stream to the dashboard.";
     } else {
       chip.textContent = "Not linked";
       chip.className = "chip chip-blue";
@@ -71,6 +113,16 @@
         ? "Server reachable. Enter a pairing code from the dashboard's Agents page."
         : "Enter your sync server URL and test the connection.";
     }
+
+    // Sidebar chip: dot color reflects online + linked.
+    const dot = $("link-dot");
+    dot.classList.toggle("linked", !!status.linked);
+    dot.classList.toggle("online", !status.linked && !!status.online);
+    $("link-chip-text").textContent = status.linked
+      ? "Linked to dashboard"
+      : status.online
+        ? "Server online — not linked"
+        : "Not linked";
   }
 
   async function testServer() {
@@ -79,8 +131,7 @@
       $("link-note").textContent = "Server online — enter the pairing code to link this agent.";
       return true;
     }
-    $("link-note").textContent =
-      "Server unreachable. Start it with: cd server && npm start";
+    $("link-note").textContent = "Server unreachable. Start it with: cd server && npm start";
     return false;
   }
 
@@ -94,13 +145,13 @@
     if (result && result.ok) {
       $("pair-code").value = "";
       refreshLinkStatus();
+      refreshDevices();
     } else {
-      $("link-note").textContent =
-        (result && result.error) || "Pairing failed — is the sync server running?";
+      $("link-note").textContent = (result && result.error) || "Pairing failed — is the sync server running?";
     }
   }
 
-  /* ---------- location ---------- */
+  /* ================= location / signal ladder ================= */
 
   function renderFix(fix) {
     if (!fix) return;
@@ -108,7 +159,6 @@
     map.classList.add("has-fix");
     $("map-coords").textContent = `${fix.lat.toFixed(4)}°, ${fix.lng.toFixed(4)}° · ${fix.source}`;
 
-    // Highlight the current ladder rung.
     document.querySelectorAll(".ladder-row").forEach((row) => row.classList.remove("current"));
     const current = document.querySelector(`.ladder-row[data-source="${fix.source}"]`);
     if (current) current.classList.add("current");
@@ -144,28 +194,296 @@
     $("btn-track").textContent = "Locate now";
   }
 
-  /* ---------- owner alerts (reconnects, SIM changes) ---------- */
+  /* ================= devices ================= */
+
+  const TYPE_LABEL = { phone: "Phone", laptop: "Laptop" };
+
+  function timeAgo(iso) {
+    if (!iso) return "never";
+    const ms = Date.now() - new Date(iso).getTime();
+    if (ms < 60_000) return "just now";
+    if (ms < 3_600_000) return `${Math.floor(ms / 60_000)}m ago`;
+    if (ms < 86_400_000) return `${Math.floor(ms / 3_600_000)}h ago`;
+    return new Date(iso).toLocaleDateString();
+  }
+
+  function deviceName(d) {
+    if (d.hostname) return d.hostname;
+    const id = d.deviceId || "";
+    return id ? "Device " + id.slice(0, 6).toUpperCase() : "Unknown";
+  }
+
+  function deviceIdCode(d) {
+    if (d.type === "phone" && d.imei) return `IMEI ${d.imei}`;
+    if (d.serialNumber) return d.serialNumber;
+    return "";
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  async function refreshDevices() {
+    const res = await api.listDevices();
+    const linked = res && res.ok;
+    if (!linked) {
+      $("devices-body").innerHTML =
+        '<tr><td colspan="6" class="table-empty">Link this agent to your dashboard (Settings) to see all devices.</td></tr>';
+      $("devices-foot").textContent = "";
+      devices = [];
+      renderNavBadges();
+      renderStats();
+      return;
+    }
+    devices = res.devices || [];
+    $("devices-body").innerHTML = devices
+      .map((d) => {
+        const name = escapeHtml(deviceName(d));
+        const code = escapeHtml(deviceIdCode(d));
+        const type = d.type === "phone" ? "Phone" : "Laptop";
+        const chip = d.lost
+          ? '<span class="chip chip-danger">● Lost</span>'
+          : d.lastSeenAt
+            ? '<span class="chip chip-success">● Online</span>'
+            : '<span class="chip chip-gray">Offline</span>';
+        const sightings = d.sightingCount || 0;
+        const sight = sightings > 0
+          ? `<button class="btn-lost" data-sightings="${escapeHtml(d.deviceId)}" title="Community sightings for this device">👁 ${sightings}</button>`
+          : "";
+        return `<tr>
+          <td>
+            <div class="device-cell">
+              <strong>${name}</strong>
+              <small>${code || escapeHtml(d.deviceId || "")}</small>
+            </div>
+          </td>
+          <td><span class="chip ${d.type === "phone" ? "chip-blue" : "chip-amber"}">${type}</span></td>
+          <td>${escapeHtml(d.operator || "—")}</td>
+          <td class="mono" style="font-size:12px">${timeAgo(d.lastSeenAt)}</td>
+          <td>${chip}</td>
+          <td class="td-right">
+            <button class="btn-lost ${d.lost ? "lost" : ""}" data-lost-id="${escapeHtml(d.deviceId)}" data-lost="${d.lost ? "1" : "0"}">
+              ${d.lost ? "Lost — click to find" : "Mark lost"}
+            </button>
+            ${sight}
+          </td>
+        </tr>`;
+      })
+      .join("") || '<tr><td colspan="6" class="table-empty">No devices paired yet.</td></tr>';
+
+    const lost = devices.filter((d) => d.lost).length;
+    $("devices-foot").textContent =
+      `${devices.length} device${devices.length === 1 ? "" : "s"} protected · ${lost} lost` +
+      (devices.length === 0 ? " — generate a pairing code on the web dashboard's Agents page and enter it in Settings." : "");
+
+    document.querySelectorAll("[data-lost-id]").forEach((btn) => {
+      btn.addEventListener("click", () => toggleDeviceLost(btn));
+    });
+    document.querySelectorAll("[data-sightings]").forEach((btn) => {
+      btn.addEventListener("click", () => showSightings(btn.getAttribute("data-sightings")));
+    });
+
+    renderNavBadges();
+    renderStats();
+  }
+
+  async function toggleDeviceLost(btn) {
+    const id = btn.getAttribute("data-lost-id");
+    const next = btn.getAttribute("data-lost") !== "1";
+    btn.disabled = true;
+    const res = await api.setDeviceLost(id, next);
+    btn.disabled = false;
+    if (res && res.ok) {
+      btn.setAttribute("data-lost", next ? "1" : "0");
+      btn.classList.toggle("lost", next);
+      btn.textContent = next ? "Lost — click to find" : "Mark lost";
+      const dev = devices.find((d) => d.deviceId === id);
+      if (dev) dev.lost = next;
+      renderNavBadges();
+      renderStats();
+    }
+  }
+
+  async function showSightings(deviceId) {
+    const res = await api.getSightings(deviceId);
+    const list = (res && res.sightings) || [];
+    const dev = devices.find((d) => d.deviceId === deviceId);
+    const name = deviceName(dev || {});
+    if (list.length === 0) {
+      alert(`No community sightings for ${name} yet.\n\nSightings appear when another TrackNaija device hears its beacon nearby — while it is marked lost.`);
+      return;
+    }
+    const lines = list
+      .map(
+        (s) =>
+          `${s.receivedAt ? new Date(s.receivedAt).toLocaleString() : "?"}  ·  ${Number(s.lat).toFixed(4)}°, ${Number(s.lng).toFixed(4)}°` +
+          (s.accuracy ? `  (±${s.accuracy}m)` : ""),
+      )
+      .join("\n");
+    alert(`Community sightings — ${name}\n\n${lines}`);
+  }
+
+  /* ================= overview stats ================= */
+
+  function renderStats() {
+    $("stat-devices").textContent = devices.length;
+    $("stat-lost").textContent = devices.filter((d) => d.lost).length;
+    $("stat-sightings").textContent = devices.reduce((n, d) => n + (d.sightingCount || 0), 0);
+  }
+
+  /* ================= find nearby (BLE) ================= */
+
+  let scanning = false;
+
+  async function startScan() {
+    if (scanning) return;
+    scanning = true;
+    $("btn-scan").disabled = true;
+    $("btn-scan").textContent = "Scanning…";
+    $("scan-status").innerHTML = '<span class="scan-spinner"></span> Sweeping for TrackNaija beacons…';
+    $("scan-results").innerHTML = "";
+
+    const duration = Number($("scan-duration").value || 15);
+    const res = await api.scanNearby(duration);
+
+    $("btn-scan").disabled = false;
+    $("btn-scan").textContent = "Start sweep";
+    scanning = false;
+
+    if (!res || !res.supported) {
+      $("scan-status").textContent =
+        "Bluetooth scanning is only supported on Windows with a Bluetooth radio. On macOS/Linux this machine can still find its own position.";
+      $("scan-results").innerHTML = "";
+      return;
+    }
+
+    const beacons = res.beacons || [];
+    if (beacons.length === 0) {
+      $("scan-status").textContent =
+        res.reason === "unsupported"
+          ? "Sweep finished — no TrackNaija beacons heard. (Bluetooth adapter unavailable: " + (res.reason || "unknown") + ")"
+          : "Sweep finished — no TrackNaija beacons in range. Lost phones near you broadcast one; keep this dashboard open and sweep again.";
+      $("scan-results").innerHTML =
+        '<div class="scan-empty">No beacons heard. If a lost device is nearby, its beacon will show up here.</div>';
+      return;
+    }
+
+    $("scan-status").textContent =
+      `Heard ${beacons.length} beacon${beacons.length === 1 ? "" : "s"}` +
+      (res.reported ? ` — ${res.reported} sighting${res.reported === 1 ? "" : "s"} reported to your dashboard` : "") +
+      (res.at ? ` from ${Number(res.at.lat).toFixed(4)}°, ${Number(res.at.lng).toFixed(4)}°` : "") +
+      ".";
+    $("scan-results").innerHTML = beacons
+      .map(
+        (b) => `<div class="scan-beacon">
+          <span class="scan-spinner" style="border-top-color:var(--violet)"></span>
+          <div>
+            <div class="beacon-id">${escapeHtml(b.beacon)}</div>
+            <div class="beacon-meta">TrackNaija beacon · ${b.rssi ?? "?"} dBm</div>
+          </div>
+        </div>`,
+      )
+      .join("");
+  }
+
+  /* ================= alerts ================= */
+
+  function alertClass(type) {
+    return type === "sim_change" ? "sim_change" : type === "sighting" ? "sighting" : "reconnect";
+  }
+
+  function alertTitle(a) {
+    const host = a.hostname ? " " + a.hostname : "";
+    switch (a.type) {
+      case "sim_change":
+        return "SIM change detected" + host;
+      case "sighting":
+        return "Seen by the community" + host;
+      default:
+        return "Device reconnected" + host;
+    }
+  }
+
+  function upsertAlert(a) {
+    if (!a || !a.id) return;
+    const i = alerts.findIndex((x) => x.id === a.id);
+    if (i >= 0) alerts[i] = a;
+    else alerts.unshift(a);
+    renderAlerts();
+    renderNavBadges();
+  }
+
+  function renderAlerts() {
+    if (alerts.length === 0) {
+      $("alerts-feed").innerHTML = '<p class="table-empty">No alerts yet. Reconnects, SIM changes and sightings appear here.</p>';
+      return;
+    }
+    $("alerts-feed").innerHTML = alerts
+      .map(
+        (a) => `<div class="alert-item ${alertClass(a.type)}">
+          <div class="alert-item-body">
+            <p class="alert-item-title">${escapeHtml(alertTitle(a))}</p>
+            <p>${escapeHtml(a.body || "")}</p>
+          </div>
+          <span class="alert-item-time">${a.at ? new Date(a.at).toLocaleString() : ""}</span>
+        </div>`,
+      )
+      .join("");
+  }
+
+  async function refreshAlerts() {
+    const res = await api.getAlerts();
+    if (!res || !res.ok) return;
+    const incoming = res.alerts || [];
+    let changed = false;
+    for (const a of incoming) {
+      if (!alerts.some((x) => x.id === a.id)) {
+        alerts.push(a);
+        changed = true;
+      }
+    }
+    if (changed) {
+      renderAlerts();
+      renderNavBadges();
+    }
+  }
+
+  async function clearAllAlerts() {
+    await api.markAlertRead();
+    alerts = alerts.map((a) => ({ ...a, read: true }));
+    renderNavBadges();
+  }
+
+  /* ================= alert banner (pushed live) ================= */
 
   function showAlertBanner(alert) {
     if (!alert) return;
+    $("alert-banner-text").textContent = alert.body || alertTitle(alert);
     const banner = $("alert-banner");
-    $("alert-banner-text").textContent =
-      alert.body || `${alert.hostname} — ${alert.type.replace("_", " ")}`;
     banner.classList.toggle("danger", alert.type === "sim_change");
-    banner.classList.toggle("info", alert.type !== "sim_change");
+    banner.classList.toggle("info", alert.type !== "sim_change" && alert.type !== "sighting");
+    banner.classList.toggle("violet", alert.type === "sighting");
     banner.classList.remove("hidden");
+    upsertAlert(alert);
   }
 
-  /* ---------- lost mode ---------- */
+  /* ================= lost mode ================= */
 
   function updateStatusChip(on) {
     const chip = $("status-chip");
+    const quick = $("lost-quick");
     if (on) {
       chip.textContent = "● LOST MODE — webcam armed";
       chip.className = "chip chip-danger";
+      quick.classList.remove("hidden");
     } else {
       chip.textContent = "● Agent running";
       chip.className = "chip chip-success";
+      quick.classList.add("hidden");
     }
   }
 
@@ -174,7 +492,7 @@
     updateStatusChip(!!state.lostMode);
   }
 
-  /* ---------- webcam ---------- */
+  /* ================= webcam ================= */
 
   let stream = null;
   async function startWebcam() {
@@ -202,7 +520,7 @@
     const dataUrl = canvas.toDataURL("image/jpeg", 0.85);
     api.webcamCaptured(dataUrl).catch(() => {});
     $("webcam-note").textContent =
-      "Photo captured and saved as evidence — uploaded to your dashboard when the backend is wired.";
+      "Photo captured and saved as evidence — uploaded to your dashboard now (or held offline until this machine reconnects).";
     $("webcam-note").classList.remove("hidden");
   }
 
@@ -218,13 +536,15 @@
     $("webcam-note").classList.add("hidden");
   }
 
-  /* ---------- events ---------- */
+  /* ================= events ================= */
 
   function wireEvents() {
+    document.querySelectorAll(".nav-item").forEach((item) => {
+      item.addEventListener("click", () => switchView(item.getAttribute("data-view")));
+    });
+
     $("btn-track").addEventListener("click", refreshLocation);
-
     $("lost-toggle").addEventListener("change", (e) => toggleLost(e.target.checked));
-
     $("autostart-toggle").addEventListener("change", async (e) => {
       state = (await api.setAutoStart(e.target.checked)) || state;
     });
@@ -232,13 +552,23 @@
     $("btn-webcam").addEventListener("click", startWebcam);
     $("btn-shoot").addEventListener("click", snapPhoto);
     $("btn-cam-off").addEventListener("click", stopWebcam);
-
     $("btn-alarm").addEventListener("click", () => api.playAlarm());
-    $("btn-lock").addEventListener("click", async () => {
-      await api.lockScreen();
+    $("btn-lock").addEventListener("click", () => api.lockScreen());
+
+    $("btn-refresh-devices").addEventListener("click", refreshDevices);
+    $("btn-scan").addEventListener("click", startScan);
+    $("btn-clear-alerts").addEventListener("click", clearAllAlerts);
+
+    $("btn-server").addEventListener("click", testServer);
+    $("btn-link").addEventListener("click", linkAgent);
+    $("btn-open-dashboard").addEventListener("click", () => {
+      const url = $("server-url").value.trim() || "http://localhost:4173";
+      api.openUrl(url);
     });
 
-    // Live updates from the main process (periodic fixes, state changes).
+    $("alert-banner-dismiss").addEventListener("click", () => $("alert-banner").classList.add("hidden"));
+
+    // Live events from the main process.
     api.onFix(renderFix);
     api.onState((next) => {
       state = next;
@@ -246,25 +576,15 @@
       $("autostart-toggle").checked = !!next.autoStart;
       updateStatusChip(!!next.lostMode);
     });
-
-    // Remote command from the dashboard: capture webcam evidence.
     api.onWebcamCommand(() => {
+      switchView("overview");
       startWebcam();
-      // Give the camera a moment to warm up, then snap automatically.
       setTimeout(() => {
         if (document.getElementById("webcam-video").srcObject) snapPhoto();
       }, 1500);
     });
-
     api.onVault(refreshVault);
     api.onAlert(showAlertBanner);
-
-    $("alert-banner-dismiss").addEventListener("click", () =>
-      $("alert-banner").classList.add("hidden"),
-    );
-
-    $("btn-server").addEventListener("click", testServer);
-    $("btn-link").addEventListener("click", linkAgent);
   }
 
   init();

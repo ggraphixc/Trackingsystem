@@ -10,7 +10,7 @@
     "start": "electron .",
     "dev": "electron . --dev",
     "dist": "electron-builder",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/tracking-engine.js && node --check src/commands.js && node --check src/ui.js && node --check src/offline-vault.js && node --check src/sync-client.js && node --check scripts/generate-icon.js && node --check src/renderer/app.js"
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/tracking-engine.js && node --check src/commands.js && node --check src/ui.js && node --check src/offline-vault.js && node --check src/sync-client.js && node --check src/ble-scan.js && node --check scripts/generate-icon.js && node --check src/renderer/app.js"
   },
   "devDependencies": {
     "electron": "^33.2.0",

@@ -14,6 +14,13 @@ contextBridge.exposeInMainWorld("tracknaija", {
   playAlarm: () => ipcRenderer.invoke("agent:play-alarm"),
   webcamCaptured: (dataUrl) => ipcRenderer.invoke("agent:webcam-captured", dataUrl),
   vaultStatus: () => ipcRenderer.invoke("agent:vault-status"),
+  listDevices: () => ipcRenderer.invoke("agent:list-devices"),
+  setDeviceLost: (deviceId, lost) => ipcRenderer.invoke("agent:set-device-lost", deviceId, lost),
+  getSightings: (deviceId) => ipcRenderer.invoke("agent:get-sightings", deviceId),
+  scanNearby: (durationSec) => ipcRenderer.invoke("agent:scan-nearby", durationSec),
+  getAlerts: () => ipcRenderer.invoke("agent:get-alerts"),
+  markAlertRead: (id) => ipcRenderer.invoke("agent:mark-alert-read", id),
+  openUrl: (url) => ipcRenderer.invoke("agent:open-url", url),
   onState: (cb) => {
     const listener = (_e, state) => cb(state);
     ipcRenderer.on("agent:state", listener);

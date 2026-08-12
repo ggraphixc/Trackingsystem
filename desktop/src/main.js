@@ -1,9 +1,10 @@
-const { app, ipcMain, session, Notification } = require("electron");
+const { app, ipcMain, session, Notification, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const { TrackingEngine } = require("./tracking-engine");
 const { SyncClient } = require("./sync-client");
 const { OfflineVault } = require("./offline-vault");
+const { scanNearby } = require("./ble-scan");
 const { getDeviceInfo, lockScreen, playAlarm } = require("./commands");
 const { createWindow, createTray, updateTray, openAgent, getWindow } = require("./ui");
 
@@ -266,6 +267,90 @@ ipcMain.handle("agent:set-autostart", (_e, on) => {
 
 ipcMain.handle("agent:lock-screen", () => lockScreen());
 ipcMain.handle("agent:play-alarm", () => playAlarm());
+
+/* ---------------- tracking dashboard IPC ---------------- */
+
+/** All paired devices (phones + laptops) — the command-center view. */
+ipcMain.handle("agent:list-devices", async () => {
+  const state = loadState();
+  if (!sync || !state.deviceId || !sync.configured) return { ok: false, devices: [], reason: "not-linked" };
+  const res = await sync.listDevices();
+  // The server's GET /api/devices returns a bare array; tolerate both shapes.
+  const list = Array.isArray(res) ? res : (res && res.devices) || [];
+  return { ok: Array.isArray(res) || !!res, devices: list };
+});
+
+/** Owner flips a phone/laptop between lost and found from the desktop. */
+ipcMain.handle("agent:set-device-lost", async (_e, deviceId, lost) => {
+  if (!sync || !sync.configured) return { ok: false };
+  const res = await sync.setDeviceLost(deviceId, !!lost);
+  return { ok: !!res };
+});
+
+/** Community sightings for one device (newest first). */
+ipcMain.handle("agent:get-sightings", async (_e, deviceId) => {
+  if (!sync || !sync.configured) return { ok: false, sightings: [] };
+  const res = await sync.getSightings(deviceId);
+  // The server returns a bare array for sightings; tolerate both shapes.
+  const list = Array.isArray(res) ? res : (res && res.sightings) || [];
+  return { ok: Array.isArray(res) || !!res, sightings: list };
+});
+
+/**
+ * BLE sweep: this laptop's own radio listens for TrackNaija beacons.
+ * Every heard beacon is reported to the sync server as a sighting with THIS
+ * machine's position (fresh fix when possible, else last known) — the laptop
+ * joins the community relay alongside phones.
+ */
+ipcMain.handle("agent:scan-nearby", async (_e, durationSec) => {
+  const result = await scanNearby(durationSec || 10);
+  if (!result.supported) return result;
+  if (!sync || !sync.configured || result.beacons.length === 0) return result;
+
+  // Position for the sighting: prefer a fresh fix, fall back to last known.
+  let fix = null;
+  if (engine) fix = await engine.trackNow().catch(() => null);
+  if (!fix) fix = (loadState().lastFix || null);
+  if (!fix) return result; // no position — report nothing rather than lie
+
+  let reported = 0;
+  for (const b of result.beacons) {
+    const ok = await sync.postSighting({
+      beacon: b.beacon,
+      lat: fix.lat,
+      lng: fix.lng,
+      accuracy: fix.accuracy || null,
+      source: "ble",
+      rssi: b.rssi || null,
+    });
+    if (ok) reported++;
+  }
+  return { ...result, reported, at: { lat: fix.lat, lng: fix.lng } };
+});
+
+/** Full alert list for the dashboard feed (main.js pushes new ones live). */
+ipcMain.handle("agent:get-alerts", async () => {
+  if (!sync || !sync.configured) return { ok: false, alerts: [] };
+  const res = await sync.getAlerts();
+  return { ok: !!res, alerts: (res && res.alerts) || [] };
+});
+
+/** Dismiss an alert in the dashboard feed (or all with no id). */
+ipcMain.handle("agent:mark-alert-read", async (_e, id) => {
+  if (!sync || !sync.configured) return { ok: false };
+  const res = await sync.markAlertRead(id || null);
+  return { ok: !!res };
+});
+
+/** Open the web dashboard (same server) in the default browser. */
+ipcMain.handle("agent:open-url", (_e, url) => {
+  try {
+    shell.openExternal(String(url || ""));
+    return { ok: true };
+  } catch (_) {
+    return { ok: false };
+  }
+});
 
 ipcMain.handle("agent:webcam-captured", async (_e, dataUrl) => {
   const state = saveState({ lastCaptureAt: new Date().toISOString() });

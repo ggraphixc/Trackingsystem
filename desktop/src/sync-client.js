@@ -97,6 +97,16 @@ class SyncClient {
   async getSightings(deviceId) {
     return this._req("GET", `/api/devices/${deviceId}/sightings`);
   }
+
+  /** All paired devices (phones + laptops) for the owner dashboard. */
+  async listDevices() {
+    return this._req("GET", "/api/devices");
+  }
+
+  /** Mark an alert read ({ id } or { all: true }). */
+  async markAlertRead(id) {
+    return this._req("POST", "/api/alerts/read", id ? { id } : { all: true });
+  }
 }
 
 module.exports = { SyncClient };
