@@ -140,6 +140,32 @@
     return false;
   }
 
+  /** Single source of truth for the hosted Dravex endpoints. */
+  const LIVE_SERVER = "https://dravex.onrender.com";
+  const LIVE_DASHBOARD = "https://dravex.vercel.app";
+
+  /** The web command center for a given sync server URL (dev vs production). */
+  function dashboardUrlFor(serverUrl) {
+    return /localhost|127\.0\.0\.1/.test(String(serverUrl || ""))
+      ? "http://localhost:3000"
+      : LIVE_DASHBOARD;
+  }
+
+  function openDashboard() {
+    api.openUrl(dashboardUrlFor($("server-url").value.trim()));
+  }
+
+  /** One-click: point this agent at the hosted Dravex server and test it. */
+  async function useLiveServer() {
+    $("server-url").value = LIVE_SERVER;
+    $("link-note").textContent = "Pointing at the live Dravex server…";
+    const ok = await testServer();
+    if (!ok) {
+      $("link-note").textContent =
+        "Live server unreachable — check your internet connection, then try again.";
+    }
+  }
+
   async function saveOwnerKey() {
     $("btn-save-owner-key").disabled = true;
     const res = await api.setOwnerKey($("owner-key").value);
@@ -1202,10 +1228,9 @@
     $("btn-login").addEventListener("click", doLogin);
     $("btn-logout").addEventListener("click", doLogout);
     $("btn-save-report-info").addEventListener("click", saveReportInfo);
-    $("btn-open-dashboard").addEventListener("click", () => {
-      const url = $("server-url").value.trim() || "http://localhost:4173";
-      api.openUrl(url);
-    });
+    $("btn-open-dashboard").addEventListener("click", openDashboard);
+    $("btn-open-dash-card").addEventListener("click", openDashboard);
+    $("btn-use-live").addEventListener("click", useLiveServer);
 
     $("alert-banner-dismiss").addEventListener("click", () => $("alert-banner").classList.add("hidden"));
 
