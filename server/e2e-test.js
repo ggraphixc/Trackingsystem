@@ -402,6 +402,16 @@ async function api(path, body) {
     throw new Error("contact channel leaked onto a non-lost device");
   }
 
+  // 36. Regression guard: GET /api/admin/health must be 200 in open mode and
+  // expose the deliveryLog key (Phase 2.5 observability). This caught a real
+  // 500 (undefined `sms`) — keep it pinned so it can't regress.
+  const ah = await fetch(BASE + "/api/admin/health");
+  const ahJson = await ah.json().catch(() => ({}));
+  console.log(`[36] admin health: HTTP ${ah.status} deliveryLog=${Array.isArray(ahJson.deliveryLog)}`);
+  if (ah.status !== 200 || !Array.isArray(ahJson.deliveryLog)) {
+    throw new Error("admin/health regressed (expected 200 + deliveryLog array)");
+  }
+
   console.log("== E2E PASSED ==");
 })().then(
   () => {

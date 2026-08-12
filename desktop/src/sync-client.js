@@ -5,7 +5,8 @@
 class SyncClient {
   constructor(serverUrl) {
     this.serverUrl = String(serverUrl || "").replace(/\/+$/, "");
-    this.ownerKey = null; // DRAVEX_OWNER_KEY — owner-scoped calls
+    this.ownerKey = null; // DRAVEX_OWNER_KEY — owner-scoped calls (legacy)
+    this.sessionToken = null; // Phase 2.5 account session — preferred credential
     this.deviceToken = null; // issued at claim — device-scoped calls
   }
 
@@ -25,11 +26,20 @@ class SyncClient {
     return this;
   }
 
+  /** Phase 2.5 account session — preferred over the legacy owner key. */
+  setSessionToken(token) {
+    this.sessionToken = token ? String(token).trim() : null;
+    return this;
+  }
+
   async _req(method, path, body, opts = {}) {
     if (!this.configured) return null;
     // opts.auth: "owner" | "device" | "none" (default "owner" for reads).
     const auth = opts.auth || "owner";
-    const token = auth === "device" ? this.deviceToken : auth === "owner" ? this.ownerKey : null;
+    // Owner-scoped calls accept the account session first (per-owner model),
+    // falling back to the legacy DRAVEX_OWNER_KEY.
+    const token =
+      auth === "device" ? this.deviceToken : auth === "owner" ? this.sessionToken || this.ownerKey : null;
     // Manual timeout (AbortController + clearTimeout) so no timers linger
     // after the request — avoids Node/Windows shutdown crashes and leaks.
     const controller = new AbortController();
@@ -225,6 +235,46 @@ class SyncClient {
   async markAlertRead(id) {
     return this._req("POST", "/api/alerts/read", id ? { id } : { all: true });
   }
+
+  /* ---------------- Phase 2.5: account session ---------------- */
+
+  /**
+   * Log into an owner account. Stores the session token so subsequent
+   * owner-scoped calls use it (each account sees only its own devices).
+   * Returns { ok, user?, error? }.
+   */
+  async login(email, password) {
+    const res = await this._req(
+      "POST",
+      "/api/auth/login",
+      { email: String(email || "").trim(), password: String(password || "") },
+      { auth: "none" },
+    );
+    if (res && res.token) {
+      this.setSessionToken(res.token);
+      return { ok: true, user: res };
+    }
+    return { ok: false, error: "Login failed — check the email and password." };
+  }
+
+  /** Log out of the account session (server-side token invalidated). */
+  async logout() {
+    // auth "owner" sends the session token (or owner key) as the bearer —
+    // the server needs it to know WHICH session to invalidate.
+    if (this.sessionToken) {
+      await this._req("POST", "/api/auth/logout", {}, { auth: "owner" });
+    }
+    this.sessionToken = null;
+    return { ok: true };
+  }
+
+  /** Who is this session? { ok, user? } — null user when signed out. */
+  async me() {
+    const res = await this._req("GET", "/api/auth/me", null, { auth: "owner" });
+    return { ok: !!(res && res.ok), user: res || null };
+  }
 }
+
+module.exports = { SyncClient };
 
 module.exports = { SyncClient };

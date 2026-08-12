@@ -27,6 +27,8 @@ contextBridge.exposeInMainWorld("dravex", {
   scanNearby: (durationSec) => ipcRenderer.invoke("agent:scan-nearby", durationSec),
   getAlerts: () => ipcRenderer.invoke("agent:get-alerts"),
   markAlertRead: (id) => ipcRenderer.invoke("agent:mark-alert-read", id),
+  login: (email, password) => ipcRenderer.invoke("agent:login", email, password),
+  logout: () => ipcRenderer.invoke("agent:logout"),
   openUrl: (url) => ipcRenderer.invoke("agent:open-url", url),
   onState: (cb) => {
     const listener = (_e, state) => cb(state);

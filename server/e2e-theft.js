@@ -73,9 +73,12 @@ function startServer() {
         ...process.env,
         PORT: String(PORT),
         DATA_FILE,
-        // Force file mode: the lab must be hermetic — it must never write its
-        // fixed-IMEI test devices into a real Neon database.
+        // Force file mode + open auth: the lab must be hermetic — it must
+        // never write its fixed-IMEI test devices into a real Neon database,
+        // and a DRAVEX_OWNER_KEY in the host env (server/.env) must not flip
+        // it into auth mode (pair/register would 401).
         DATABASE_URL: "",
+        DRAVEX_OWNER_KEY: "",
         RECONNECT_GAP_HOURS: "0.001", // ~3.6 s — simulates the 12 h gap
       },
       stdio: "ignore",

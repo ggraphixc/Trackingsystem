@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getAdminHealth } from "@/lib/api";
+import { getAdminHealth, retryDelivery } from "@/lib/api";
 import type { AdminHealth } from "@/lib/api";
 import {
   AlertTriangleIcon,
@@ -45,6 +45,14 @@ export default function AdminPage() {
   const [health, setHealth] = useState<AdminHealth | null>(null);
   const [loading, setLoading] = useState(true);
   const [note, setNote] = useState("");
+  const [retrying, setRetrying] = useState<string | null>(null);
+
+  async function retry(id: string) {
+    setRetrying(id);
+    await retryDelivery(id);
+    setRetrying(null);
+    load();
+  }
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -228,6 +236,54 @@ export default function AdminPage() {
                 hint="log mode until providers are set"
               />
             </div>
+          </div>
+
+          <div className="mb-6">
+            <h3 className="mb-3 text-sm font-semibold text-ink">Alert delivery log</h3>
+            {health.deliveryLog.length === 0 ? (
+              <Card className="p-4 text-xs text-ink-muted">
+                No delivery attempts recorded yet — SMS and webhook deliveries appear here (failures and
+                successes), and failed ones can be retried from this page.
+              </Card>
+            ) : (
+              <Card className="p-0">
+                <ul className="divide-y divide-slate-100">
+                  {health.deliveryLog.map((e) => (
+                    <li
+                      key={e.id}
+                      className="flex flex-wrap items-center gap-3 px-4 py-3"
+                    >
+                      <span
+                        className={`chip ${
+                          e.ok
+                            ? "bg-emerald-50 text-emerald-700 ring-emerald-600/20"
+                            : "bg-red-50 text-red-700 ring-red-600/20"
+                        }`}
+                      >
+                        {e.ok ? "delivered" : "failed"}
+                      </span>
+                      <span className="font-mono text-xs font-medium text-ink">{e.channel}</span>
+                      <span className="min-w-0 flex-1 truncate text-xs text-ink-muted">
+                        {e.alert ? `${e.alert.type} · ${e.alert.hostname}` : "—"}
+                        {e.error ? ` · ${e.error}` : ""}
+                      </span>
+                      <span className="shrink-0 text-[11px] text-ink-faint">
+                        {new Date(e.at).toLocaleString("en-NG")}
+                      </span>
+                      {!e.ok && e.alert ? (
+                        <button
+                          className="btn-ghost !px-2 !py-1 text-[11px]"
+                          onClick={() => retry(e.id)}
+                          disabled={retrying === e.id}
+                        >
+                          {retrying === e.id ? "Retrying…" : "Retry"}
+                        </button>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </Card>
+            )}
           </div>
 
           <div>

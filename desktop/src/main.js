@@ -45,6 +45,8 @@ const defaultState = {
   pairedAt: null,
   deviceToken: null, // agent credential issued at claim (auth mode)
   ownerKey: "", // DRAVEX_OWNER_KEY — only needed when the server enables auth
+  sessionToken: "", // Phase 2.5 account session — preferred owner credential
+  sessionEmail: "", // display-only: who this machine is signed in as
 };
 
 function loadState() {
@@ -57,6 +59,7 @@ function loadState() {
         // Secrets are boxed on disk — decrypt once, cache in memory.
         deviceToken: boxedOrUnbox(parsed.deviceToken),
         ownerKey: boxedOrUnbox(parsed.ownerKey),
+        sessionToken: boxedOrUnbox(parsed.sessionToken),
       };
     }
   } catch (err) {
@@ -78,6 +81,7 @@ function saveState(patch) {
   const persisted = { ...next };
   if (persisted.deviceToken !== undefined) persisted.deviceToken = boxForStorage(persisted.deviceToken);
   if (persisted.ownerKey !== undefined) persisted.ownerKey = boxForStorage(persisted.ownerKey);
+  if (persisted.sessionToken !== undefined) persisted.sessionToken = boxForStorage(persisted.sessionToken);
   try {
     fs.writeFileSync(stateFile, JSON.stringify(persisted, null, 2));
   } catch (err) {
@@ -245,11 +249,13 @@ ipcMain.handle("agent:get-info", async () => {
 });
 
 ipcMain.handle("agent:set-server", (_e, url) => {
-  // Restore BOTH credentials: the owner key for owner-scoped reads and the
-  // device token for this agent's own uploads (re-pointing the URL must not
-  // drop the token issued at claim).
+  // Restore ALL credentials: the account session, the owner key and the
+  // device token (re-pointing the URL must not drop any of them).
   const st = loadState();
-  sync = new SyncClient(url).setOwnerKey(st.ownerKey).setDeviceToken(st.deviceToken);
+  sync = new SyncClient(url)
+    .setOwnerKey(st.ownerKey)
+    .setSessionToken(st.sessionToken)
+    .setDeviceToken(st.deviceToken);
   const state = saveState({ serverUrl: url });
   return sync.health().then((h) => ({
     state,
@@ -265,10 +271,32 @@ ipcMain.handle("agent:set-owner-key", (_e, key) => {
   return { ownerKey: state.ownerKey || "" };
 });
 
+/**
+ * Phase 2.5 account login: POST /api/auth/login with the server this agent
+ * is pointed at, store the session (boxed at rest) and the email for the
+ * Settings view. Owner-scoped calls now use the session (per-owner model).
+ */
+ipcMain.handle("agent:login", async (_e, email, password) => {
+  if (!sync) sync = new SyncClient(loadState().serverUrl).setOwnerKey(loadState().ownerKey).setDeviceToken(loadState().deviceToken);
+  const res = await sync.login(email, password);
+  if (res && res.ok && res.user) {
+    saveState({ sessionToken: res.user.token || "", sessionEmail: res.user.email || "" });
+    return { ok: true, email: res.user.email };
+  }
+  return { ok: false, error: (res && res.error) || "Login failed — is the server reachable?" };
+});
+
+/** Phase 2.5 account logout: invalidate the server session + clear locally. */
+ipcMain.handle("agent:logout", async () => {
+  if (sync) await sync.logout();
+  saveState({ sessionToken: "", sessionEmail: "" });
+  return { ok: true };
+});
+
 ipcMain.handle("agent:claim", async (_e, code) => {
   const info = await getDeviceInfo();
   saveState({ serialNumber: info.serialNumber });
-  if (!sync) sync = new SyncClient(loadState().serverUrl).setOwnerKey(loadState().ownerKey);
+  if (!sync) sync = new SyncClient(loadState().serverUrl).setOwnerKey(loadState().ownerKey).setSessionToken(loadState().sessionToken);
   const res = await sync.claim(code, info);
   if (res && res.deviceId) {
     // Store the agent credential issued at claim so device-scoped calls stay
@@ -566,7 +594,20 @@ if (!gotLock) {
     const bootState = loadState();
     sync = new SyncClient(bootState.serverUrl)
       .setOwnerKey(bootState.ownerKey)
+      .setSessionToken(bootState.sessionToken)
       .setDeviceToken(bootState.deviceToken);
+
+    // Refresh the signed-in account at boot: keeps sessionEmail accurate and
+    // clears a stale session (e.g. after the server's session store reset).
+    if (bootState.sessionToken) {
+      sync.me().then((m) => {
+        if (m && m.ok && m.user && m.user.email) {
+          saveState({ sessionEmail: m.user.email });
+        } else if (m && !m.ok) {
+          saveState({ sessionToken: "", sessionEmail: "" });
+        }
+      });
+    }
 
     createWindow();
     createTray({

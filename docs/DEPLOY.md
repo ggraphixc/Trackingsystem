@@ -134,15 +134,34 @@ Settings, for the owner-only views).
 
 | Env var | Purpose | Required |
 |---|---|---|
+| `DRAVEX_OWNER_KEY` | Optional auth master key. Unset = fully open API (dev). Set = owner endpoints need `Bearer <key>` **or** an account session; agent endpoints need the per-device token. Generate with `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"` | optional (recommended in production) |
 | `GEOLOCATION_API_KEY` | Wi-Fi geolocation (Google Geolocation API key; the server falls back to Mozilla Location). **Without it, `POST /api/geolocate` answers 501 `{ source: "unresolved" }`** and the desktop honestly uses IP / last-known — it never fakes a coordinate | to resolve Wi-Fi fixes |
-| `CORS_ORIGIN` | Production web origin, e.g. `https://tracknaija.onrender.com`. When set, cross-origin calls from any other origin are blocked (default `*` is dev-only) | when the dashboard is served from a different domain |
-| `ALERT_WEBHOOK_URL` | Comma-separated HTTPS URLs that receive every alert as JSON `{ alert }`. Point it at a webhook-to-email service (e.g. ntfy, Zapier, Pipedream) for an email fallback the moment push/SMS can't reach the owner | optional |
+| `CORS_ORIGIN` | The web dashboard's origin (the **Vercel/Next.js app**, not the API host) — e.g. `https://dravex-dashboard.vercel.app`. When set, cross-origin calls from any other origin are blocked (default `*` is dev-only) | when the dashboard is served from a different domain than the API |
+| `ALERT_WEBHOOK_URL` | Comma-separated HTTPS URLs that receive every alert as JSON `{ alert }`. Point it at a webhook-to-email service (e.g. ntfy, Zapier, Pipedream) for an email fallback the moment push/SMS can't reach the owner. **Also carries password-reset tokens** (payload `{ type: "password_reset", email, token, expiresAt }`) — the server-side delivery channel for the forgot-password flow | optional (needed for real email reset delivery) |
 | `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_PHONE_NUMBER` | Twilio SMS provider (replaces log mode) | optional — either Twilio or Termii |
 | `TERMII_API_KEY` + `TERMII_FROM` | Termii SMS provider — Nigeria-native, DND-friendly | optional — either Termii or Twilio |
 
 SMS stays in **log mode** (messages print to the server console) until a
 provider is configured — the E2E suite runs against log mode, and switching
 to a live provider requires zero code changes.
+
+## Phase 2.5 (Production Readiness) notes
+
+- **Per-owner accounts** — `POST /api/auth/register|login|logout`, `GET /api/auth/me`.
+  Sessions are owner credentials in both open and `DRAVEX_OWNER_KEY` modes; each
+  account sees only its own devices (cross-owner actions → 403); pairing codes
+  minted under a session claim to that user. Devices paired before accounts
+  existed have `ownerId: null` — claim them under an account (fresh code) to
+  take ownership. Register/login are rate-limited (10/min/IP); passwords are
+  scrypt-hashed with per-user salts.
+- **Password reset** — `POST /api/auth/forgot` issues a 1 h reset token and
+  delivers it via `ALERT_WEBHOOK_URL` (webhook-to-email) or the server console
+  in log mode; `POST /api/auth/reset { token, password }` redeems it. The
+  response never reveals whether an email has an account.
+- **Observability** — `GET /api/admin/health` (owner) reports agents
+  connected/offline/lost, geolocation + sighting counters, command delivery
+  rate, SMS/webhook failures and the last 20 alert-delivery attempts.
+  `POST /api/admin/retry-delivery { id }` re-fires a failed delivery.
 
 **PostGIS note:** the Neon store auto-creates a `dravex_points` table with a
 GiST index when PostGIS is available and answers `/api/nearest` with real

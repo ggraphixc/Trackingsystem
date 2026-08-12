@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   DEFAULT_SERVER_URL,
   checkServerHealth,
+  forgotPassword,
   getMe,
   getOwnerKey,
   getSessionToken,
@@ -13,6 +14,7 @@ import {
   loginAccount,
   logoutAccount,
   registerAccount,
+  resetPassword,
   registerPair,
   saveSettings,
   sendCommand,
@@ -73,6 +75,12 @@ export default function AgentsPage() {
   const [password, setPassword] = useState("");
   const [accountBusy, setAccountBusy] = useState(false);
   const [accountNote, setAccountNote] = useState("");
+  const [resetStep, setResetStep] = useState<"idle" | "sent">("idle");
+  const [resetEmail, setResetEmail] = useState("");
+  const [resetToken, setResetToken] = useState("");
+  const [resetPw, setResetPw] = useState("");
+  const [resetBusy, setResetBusy] = useState(false);
+  const [resetNote, setResetNote] = useState("");
 
   const load = useCallback(async () => {
     setServer(await checkServerHealth());
@@ -320,6 +328,86 @@ export default function AgentsPage() {
           </div>
         )}
         {accountNote ? <p className="mt-2 text-xs text-ink-faint">{accountNote}</p> : null}
+
+        {!user ? (
+          <div className="mt-3 border-t border-slate-100 pt-3">
+            {resetStep === "idle" ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className="input min-w-48 flex-1"
+                  type="email"
+                  placeholder="Forgot password — enter your account email"
+                  value={resetEmail}
+                  onChange={(e) => setResetEmail(e.target.value)}
+                  aria-label="Reset-password email"
+                />
+                <button
+                  className="btn-ghost text-xs"
+                  disabled={resetBusy || !resetEmail}
+                  onClick={async () => {
+                    setResetBusy(true);
+                    const res = await forgotPassword(resetEmail.trim());
+                    setResetBusy(false);
+                    if (res.ok) {
+                      setResetStep("sent");
+                      setResetNote(
+                        res.deliveredVia === "webhook"
+                          ? "If that account exists, a reset link was sent via the alert webhook (webhook-to-email)."
+                          : "If that account exists, a reset code was written to the server console (log mode) — paste it below.",
+                      );
+                    } else {
+                      setResetNote(res.error ?? "Could not request a reset.");
+                    }
+                  }}
+                >
+                  {resetBusy ? "Requesting…" : "Request reset"}
+                </button>
+              </div>
+            ) : (
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  className="input min-w-40 flex-1 font-mono"
+                  placeholder="Reset code"
+                  value={resetToken}
+                  onChange={(e) => setResetToken(e.target.value)}
+                  aria-label="Reset code"
+                />
+                <input
+                  className="input min-w-40 flex-1"
+                  type="password"
+                  placeholder="New password (8+ characters)"
+                  value={resetPw}
+                  onChange={(e) => setResetPw(e.target.value)}
+                  aria-label="New password"
+                />
+                <button
+                  className="btn-secondary text-xs"
+                  disabled={resetBusy || !resetToken || resetPw.length < 8}
+                  onClick={async () => {
+                    setResetBusy(true);
+                    const res = await resetPassword(resetToken.trim(), resetPw);
+                    setResetBusy(false);
+                    if (res.ok) {
+                      setResetStep("idle");
+                      setResetToken("");
+                      setResetPw("");
+                      setResetNote("Password reset — you're signed in with the new password.");
+                      load();
+                    } else {
+                      setResetNote(res.error ?? "Could not reset the password.");
+                    }
+                  }}
+                >
+                  {resetBusy ? "Resetting…" : "Set new password"}
+                </button>
+                <button className="btn-ghost text-xs" onClick={() => { setResetStep("idle"); setResetNote(""); }}>
+                  Cancel
+                </button>
+              </div>
+            )}
+            {resetNote ? <p className="mt-2 text-xs text-ink-faint">{resetNote}</p> : null}
+          </div>
+        ) : null}
       </Card>
 
       {/* Server security — optional owner key for DRAVEX_OWNER_KEY auth */}

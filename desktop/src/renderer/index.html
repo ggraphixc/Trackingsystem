@@ -337,6 +337,18 @@
                 Only needed if your server enables DRAVEX_OWNER_KEY auth — it unlocks the owner-only views
                 (Devices, Map, Alerts). Stored on this machine only.
               </p>
+
+              <h3 style="margin:16px 0 4px;font-size:13px;color:var(--ink)">Owner account</h3>
+              <p id="account-status" class="meta">
+                Sign in so the Devices, Map and Alerts views are scoped to your account.
+              </p>
+              <div id="account-form" class="link-row">
+                <input id="account-email" class="input" type="email" placeholder="you@example.com" aria-label="Account email" />
+                <input id="account-password" class="input" type="password" placeholder="Password" aria-label="Account password" />
+                <button id="btn-login" class="btn btn-secondary btn-sm">Sign in</button>
+              </div>
+              <button id="btn-logout" class="btn btn-ghost btn-sm hidden">Sign out</button>
+              <p id="account-note" class="meta"></p>
             </section>
 
             <section class="card">

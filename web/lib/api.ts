@@ -411,6 +411,37 @@ export async function logoutAccount(): Promise<void> {
   setSessionToken("");
 }
 
+/**
+ * Request a password-reset token for an email. ALWAYS resolves ok when the
+ * server is reachable (the response never reveals whether the account
+ * exists) — delivery is via ALERT_WEBHOOK_URL (webhook→email) or the server
+ * console in log mode.
+ */
+export async function forgotPassword(
+  email: string,
+): Promise<{ ok: boolean; deliveredVia?: string; error?: string }> {
+  const res = await rawReq<{ ok: boolean; deliveredVia?: string }>("/api/auth/forgot", { email });
+  if (res.status === 200) return { ok: true, deliveredVia: res.json?.deliveredVia };
+  return {
+    ok: false,
+    error: (res.json as { error?: string } | null)?.error ?? "Server unreachable.",
+  };
+}
+
+/** Redeem a reset token with a new password; signs the owner in on success. */
+export async function resetPassword(
+  token: string,
+  password: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await rawReq<{ ok: boolean; token?: string }>("/api/auth/reset", { token, password });
+  if (res.status === 200 && res.json?.token) setSessionToken(res.json.token);
+  if (res.status === 200) return { ok: true };
+  return {
+    ok: false,
+    error: (res.json as { error?: string } | null)?.error ?? "Could not reset the password.",
+  };
+}
+
 /** Who is this browser's session? Null when signed out or server unreachable. */
 export async function getMe(): Promise<SessionUser | null> {
   const res = await rawReq<SessionUser>("/api/auth/me");
@@ -434,9 +465,29 @@ export interface AdminHealth {
   alerts: { raised: number };
   errors: { route: number };
   security: { denied401: number; rateLimited: number; registryChecks: number; registryHits: number };
+  deliveryLog: DeliveryEntry[];
+}
+
+export interface DeliveryEntry {
+  id: string;
+  channel: string; // sms | webhook
+  ok: boolean;
+  error: string | null;
+  at: string;
+  alert: { id: string; type: string; hostname: string; body: string } | null;
 }
 
 /** Service-health snapshot: agents, geolocation, sightings, delivery rates… */
 export async function getAdminHealth(): Promise<AdminHealth | null> {
   return req<AdminHealth>("/api/admin/health");
+}
+
+/** Re-fire a failed SMS/webhook delivery from the Service-health log. */
+export async function retryDelivery(
+  id: string,
+): Promise<{ ok: boolean; results?: { channel: string; ok: boolean; error?: string | null }[] } | null> {
+  return req<{ ok: boolean; results?: { channel: string; ok: boolean; error?: string | null }[] }>(
+    "/api/admin/retry-delivery",
+    { id },
+  );
 }

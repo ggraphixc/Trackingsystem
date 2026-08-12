@@ -80,6 +80,7 @@
 
     wireEvents();
     refreshLinkStatus();
+    renderAccount();
     refreshVault();
     refreshDevices();
     refreshAlerts();
@@ -146,6 +147,48 @@
     $("owner-key-note").textContent = res
       ? "Saved — owner-only views are now unlocked on this machine (if the server has auth enabled)."
       : "Could not save — is the agent running normally?";
+  }
+
+  /* ================= owner account (Phase 2.5) ================= */
+
+  function renderAccount() {
+    if (state.sessionEmail) {
+      $("account-form").classList.add("hidden");
+      $("btn-logout").classList.remove("hidden");
+      $("account-status").textContent =
+        `Signed in as ${state.sessionEmail} — Devices, Map and Alerts are scoped to this account.`;
+    } else {
+      $("account-form").classList.remove("hidden");
+      $("btn-logout").classList.add("hidden");
+      $("account-status").textContent =
+        "Sign in so the Devices, Map and Alerts views are scoped to your account.";
+    }
+  }
+
+  async function doLogin() {
+    $("btn-login").disabled = true;
+    $("btn-login").textContent = "Signing in…";
+    const res = await api.login($("account-email").value.trim(), $("account-password").value);
+    $("btn-login").disabled = false;
+    $("btn-login").textContent = "Sign in";
+    if (res && res.ok) {
+      $("account-email").value = "";
+      $("account-password").value = "";
+      state = (await api.getState()) || state;
+      renderAccount();
+      $("account-note").textContent = "Signed in — owner views are now scoped to your account.";
+      refreshDevices();
+    } else {
+      $("account-note").textContent = (res && res.error) || "Sign-in failed — is the server reachable?";
+    }
+  }
+
+  async function doLogout() {
+    await api.logout();
+    state = (await api.getState()) || state;
+    renderAccount();
+    $("account-note").textContent = "Signed out — owner views fall back to the owner key (or open mode).";
+    refreshDevices();
   }
 
   async function linkAgent() {
@@ -1156,6 +1199,8 @@
     $("btn-server").addEventListener("click", testServer);
     $("btn-link").addEventListener("click", linkAgent);
     $("btn-save-owner-key").addEventListener("click", saveOwnerKey);
+    $("btn-login").addEventListener("click", doLogin);
+    $("btn-logout").addEventListener("click", doLogout);
     $("btn-save-report-info").addEventListener("click", saveReportInfo);
     $("btn-open-dashboard").addEventListener("click", () => {
       const url = $("server-url").value.trim() || "http://localhost:4173";
@@ -1171,6 +1216,7 @@
       $("lost-toggle").checked = !!next.lostMode;
       $("autostart-toggle").checked = !!next.autoStart;
       updateStatusChip(!!next.lostMode);
+      renderAccount();
     });
     api.onWebcamCommand(() => {
       switchView("overview");

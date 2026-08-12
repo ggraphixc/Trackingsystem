@@ -93,6 +93,8 @@ let store = {
   stolen: [],
   users: {}, // userId → { userId, email, passHash, salt, role, createdAt }
   sessions: {}, // token → { userId, createdAt } (zero-dependency session store)
+  resetTokens: {}, // token → { userId, expiresAt } (password reset, 1 h TTL)
+  deliveryLog: [], // alert-delivery attempts: { id, channel, ok, error?, at, alert? }
 };
 
 /*
@@ -258,9 +260,17 @@ function raiseAlert(type, dev, body, opts = {}) {
     })
       .then((r) => {
         metrics.webhooks.sent++;
-        if (!r.ok) metrics.webhooks.failed++;
+        if (r.ok) {
+          logDelivery("webhook", true, null, alert);
+        } else {
+          metrics.webhooks.failed++;
+          logDelivery("webhook", false, `HTTP ${r.status}`, alert);
+        }
       })
-      .catch(() => metrics.webhooks.failed++);
+      .catch((err) => {
+        metrics.webhooks.failed++;
+        logDelivery("webhook", false, err.message || "network error", alert);
+      });
   }
 }
 
@@ -316,11 +326,19 @@ function smsNotify(store, alert) {
     .then((result) => {
       s.smsLastSentAt = new Date().toISOString();
       s.smsLastResult = result;
-      if (result && result.ok) metrics.sms.ok++;
-      else metrics.sms.failed++;
+      if (result && result.ok) {
+        metrics.sms.ok++;
+        logDelivery("sms", true, null, alert);
+      } else {
+        metrics.sms.failed++;
+        logDelivery("sms", false, (result && result.error) || "provider rejected", alert);
+      }
       saveStore();
     })
-    .catch(() => metrics.sms.failed++);
+    .catch((err) => {
+      metrics.sms.failed++;
+      logDelivery("sms", false, err.message || "sms error", alert);
+    });
 }
 
 function cors(req, res) {
@@ -344,6 +362,27 @@ function json(res, status, body) {
   if (status === 429) metrics.security.rateLimited++;
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+/**
+ * Append an alert-delivery attempt to the persisted ring buffer (newest
+ * first, capped at 20) so the Service-health view can show what actually
+ * reached the owner — SMS and webhook deliveries, successes and failures.
+ */
+function logDelivery(channel, ok, error, alert) {
+  store.deliveryLog = store.deliveryLog || [];
+  store.deliveryLog.unshift({
+    id: randomUUID(),
+    channel,
+    ok: !!ok,
+    error: error || null,
+    at: new Date().toISOString(),
+    alert: alert
+      ? { id: alert.id, type: alert.type, deviceId: alert.deviceId, hostname: alert.hostname, body: alert.body }
+      : null,
+  });
+  if (store.deliveryLog.length > 20) store.deliveryLog = store.deliveryLog.slice(0, 20);
+  saveStore();
 }
 
 /* ---------------- optional auth (Phase 2-lite) ---------------- */
@@ -462,6 +501,16 @@ function requireOwnerOf(req, res, dev) {
     return false;
   }
   return true;
+}
+
+/**
+ * Administrative surfaces (service health, delivery retry) are OPERATOR-only:
+ * the DRAVEX_OWNER_KEY, or open mode. An account session must never see other
+ * owners' delivery logs / device aggregates, so these do NOT accept sessions.
+ */
+function adminOk(req) {
+  if (!OWNER_KEY) return true; // open mode — no boundary exists
+  return bearer(req) === OWNER_KEY;
 }
 
 function readBody(req) {
@@ -621,6 +670,7 @@ const sightingLimiter = makeLimiter(30);
 const contactLimiter = makeLimiter(5);
 const geoLimiter = makeLimiter(20); // /api/geolocate hits a PAID provider
 const authLimiter = makeLimiter(10); // register/login — public, brute-force + storage-DoS guard
+const adminLimiter = makeLimiter(10); // admin retry-delivery — fires webhooks/SMS
 
 /* ---------------- routes ---------------- */
 
@@ -1005,6 +1055,88 @@ async function route(req, res) {
     return json(res, 200, { ok: true });
   }
 
+  // POST /api/auth/forgot { email } — issue a password-reset token (1 h TTL)
+  // and deliver it via the ALERT_WEBHOOK_URL webhook (webhook→email service)
+  // or the server console in log mode. ALWAYS answers 200: the response must
+  // not reveal whether an account exists. Rate-limited with the auth limiter.
+  if (isPost && url.pathname === "/api/auth/forgot") {
+    if (authLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many requests — try again in a minute." });
+    }
+    const body = await readBody(req);
+    const email = String(body.email || "").trim().toLowerCase();
+    let deliveredVia = "none";
+    if (email) {
+      const user = Object.values(store.users || {}).find((u) => u.email === email);
+      if (user) {
+        const token = randomBytes(24).toString("hex");
+        const expiresAt = new Date(Date.now() + 60 * 60_000).toISOString();
+        store.resetTokens = store.resetTokens || {};
+        // Sweep expired tokens on every request, then bound the map: a
+        // long-lived server must not accumulate stale reset tokens.
+        for (const [k, v] of Object.entries(store.resetTokens)) {
+          if (new Date(v.expiresAt).getTime() < Date.now()) delete store.resetTokens[k];
+        }
+        if (Object.keys(store.resetTokens).length > 1000) store.resetTokens = {};
+        store.resetTokens[token] = { userId: user.userId, expiresAt };
+        const payload = { type: "password_reset", email, token, expiresAt };
+        const hooks = (process.env.ALERT_WEBHOOK_URL || "")
+          .split(",")
+          .map((u) => u.trim())
+          .filter((u) => /^https?:\/\//.test(u));
+        for (const hook of hooks) {
+          fetch(hook, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+            signal: AbortSignal.timeout(5000),
+          }).catch(() => {});
+          deliveredVia = "webhook";
+        }
+        if (deliveredVia === "none") {
+          // Log mode: the operator reads the reset link from the server
+          // console and forwards it. Honest, testable, zero-dependency.
+          console.log(`[Dravex password-reset] ${email} → ${token} (expires ${expiresAt})`);
+          deliveredVia = "log";
+        }
+        saveStore();
+      }
+    }
+    return json(res, 200, { ok: true, deliveredVia });
+  }
+
+  // POST /api/auth/reset { token, password } — redeem a reset token, set a
+  // new password (scrypt + fresh salt), invalidate the token, and return a
+  // fresh session so the owner is signed in immediately after resetting.
+  if (isPost && url.pathname === "/api/auth/reset") {
+    const body = await readBody(req);
+    const token = String(body.token || "").trim();
+    const password = String(body.password || "");
+    const entry = (store.resetTokens || {})[token];
+    if (!entry) return json(res, 400, { error: "Invalid or expired reset token — request a new one." });
+    if (new Date(entry.expiresAt).getTime() < Date.now()) {
+      delete store.resetTokens[token];
+      saveStore();
+      return json(res, 400, { error: "This reset token has expired — request a new one." });
+    }
+    if (password.length < 8) {
+      return json(res, 400, { error: "Password must be at least 8 characters." });
+    }
+    const user = store.users[entry.userId];
+    if (!user) {
+      delete store.resetTokens[token];
+      saveStore();
+      return json(res, 400, { error: "Account no longer exists." });
+    }
+    const salt = randomBytes(16).toString("hex");
+    user.salt = salt;
+    user.passHash = hashPassword(password, salt);
+    delete store.resetTokens[token];
+    const session = newSession(user.userId);
+    saveStore();
+    return json(res, 200, { ok: true, userId: user.userId, token: session, email: user.email });
+  }
+
   // GET /api/auth/me — who is this session? (counts their devices)
   if (!isPost && url.pathname === "/api/auth/me") {
     const uid = sessionUserId(req);
@@ -1015,9 +1147,10 @@ async function route(req, res) {
   }
 
   // GET /api/admin/health — Phase 2.5 observability: what the service is
-  // doing right now, without checking every device manually. Owner-only.
+  // doing right now, without checking every device manually. Operator-only:
+  // the owner key (NOT an account session — see adminOk).
   if (!isPost && url.pathname === "/api/admin/health") {
-    if (!ownerOk(req)) return json(res, 401, { error: "Owner key or account session required." });
+    if (!adminOk(req)) return json(res, 401, { error: "Owner key required." });
     const now = Date.now();
     const all = Object.values(store.devices);
     const connected = all.filter((d) => d.lastSeenAt && now - new Date(d.lastSeenAt).getTime() < 5 * 60_000).length;
@@ -1046,12 +1179,55 @@ async function route(req, res) {
           ? Math.round((metrics.commands.acked / metrics.commands.queued) * 100) + "%"
           : "—",
       },
-      sms: { attempts: sms.attempts, ok: sms.ok, failed: sms.failed, provider: smsStatus(store).provider },
+      sms: { attempts: metrics.sms.attempts, ok: metrics.sms.ok, failed: metrics.sms.failed, provider: smsStatus(store).provider },
       webhooks: metrics.webhooks,
       alerts: metrics.alerts,
       errors: metrics.errors,
       security: metrics.security,
+      deliveryLog: (store.deliveryLog || []).slice(0, 20),
     });
+  }
+
+  // POST /api/admin/retry-delivery { id } — re-fire a failed SMS/webhook
+  // delivery from the Service-health log. Re-runs the webhook sink + SMS
+  // fallback for the recorded alert and logs the retry. Operator-only (owner
+  // key, not a session) and rate-limited: it fires paid/quotated channels.
+  if (isPost && url.pathname === "/api/admin/retry-delivery") {
+    if (!adminOk(req)) return json(res, 401, { error: "Owner key required." });
+    if (adminLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many retries — try again in a minute." });
+    }
+    const body = await readBody(req);
+    const entry = (store.deliveryLog || []).find((e) => e.id === body.id);
+    if (!entry || !entry.alert) return json(res, 404, { error: "Delivery entry not found." });
+    const results = [];
+    // Re-fire the webhook sink.
+    const hooks = (process.env.ALERT_WEBHOOK_URL || "").split(",").map((u) => u.trim()).filter((u) => /^https?:\/\//.test(u));
+    for (const hook of hooks) {
+      try {
+        const r = await fetch(hook, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ alert: entry.alert }),
+          signal: AbortSignal.timeout(5000),
+        });
+        results.push({ channel: "webhook", ok: r.ok, error: r.ok ? null : `HTTP ${r.status}` });
+        logDelivery("webhook", r.ok, r.ok ? null : `HTTP ${r.status}`, entry.alert);
+      } catch (err) {
+        results.push({ channel: "webhook", ok: false, error: err.message || "network error" });
+        logDelivery("webhook", false, err.message || "network error", entry.alert);
+      }
+    }
+    // Re-fire the SMS fallback (subject to its rate limit).
+    const s = store.settings || {};
+    if (s.smsEnabled !== false && s.ownerPhone) {
+      const result = await sendSms(s.ownerPhone, `[Dravex] ${entry.alert.body}`);
+      results.push({ channel: "sms", ok: !!(result && result.ok), error: (result && result.error) || null });
+      logDelivery("sms", !!(result && result.ok), (result && result.error) || null, entry.alert);
+    } else {
+      results.push({ channel: "sms", ok: false, error: "no owner phone configured" });
+    }
+    return json(res, 200, { ok: true, results });
   }
 
   // POST /api/pair/register { label } → { code, deviceId }. When called with
@@ -1514,6 +1690,8 @@ async function boot() {
         stolen: [],
         users: {},
         sessions: {},
+        resetTokens: {},
+        deliveryLog: [],
         claimFails: {},
         geoCache: {},
         ...loaded,
