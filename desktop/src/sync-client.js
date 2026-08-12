@@ -82,6 +82,21 @@ class SyncClient {
   async getAlerts() {
     return this._req("GET", "/api/alerts/latest");
   }
+
+  /** Community relay: report a heard BLE beacon with this machine's position. */
+  async postSighting(sighting) {
+    return this._req("POST", "/api/sightings", sighting);
+  }
+
+  /** Mark a device lost (activates community beacon alerts) / found. */
+  async setDeviceLost(deviceId, lost) {
+    return this._req("POST", `/api/devices/${deviceId}/lost`, { lost });
+  }
+
+  /** Community sightings for a device (newest first). */
+  async getSightings(deviceId) {
+    return this._req("GET", `/api/devices/${deviceId}/sightings`);
+  }
 }
 
 module.exports = { SyncClient };

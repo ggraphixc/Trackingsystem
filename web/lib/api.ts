@@ -20,6 +20,21 @@ export interface DeviceEvent {
   detail?: Record<string, unknown>;
 }
 
+export interface WifiNetwork {
+  bssid: string;
+  ssid?: string | null;
+  rssi?: number;
+}
+
+export interface CommunitySighting {
+  beacon: string;
+  lat: number;
+  lng: number;
+  accuracy: number | null;
+  at: string;
+  receivedAt: string;
+}
+
 export interface PairedDevice {
   deviceId: string;
   hostname: string | null;
@@ -36,12 +51,21 @@ export interface PairedDevice {
     source: string;
     confidence: number;
     timestamp: string;
-    networks?: number;
+    networks?: number | WifiNetwork[];
     ipAddress?: string;
+    battery?: number;
   } | null;
   commandCount: number;
   evidenceCount: number;
   events?: DeviceEvent[];
+  /** phone (Android/iOS agent) vs laptop (desktop agent) */
+  type?: "phone" | "laptop";
+  /** owner marked it lost → community beacon alerts active */
+  lost?: boolean;
+  /** current/last SIM operator, decoded from the SIM fingerprint */
+  operator?: string | null;
+  sightingCount?: number;
+  sightings?: CommunitySighting[];
 }
 
 export interface EvidenceItem {
@@ -97,6 +121,15 @@ export async function registerPair(label = "laptop"): Promise<PairingResult | nu
 
 export async function listDevices(): Promise<PairedDevice[]> {
   return (await req<PairedDevice[]>("/api/devices")) ?? [];
+}
+
+export async function getSightings(deviceId: string): Promise<CommunitySighting[]> {
+  return (await req<CommunitySighting[]>(`/api/devices/${deviceId}/sightings`)) ?? [];
+}
+
+export async function setDeviceLost(deviceId: string, lost: boolean): Promise<boolean> {
+  const res = await req<{ ok: boolean }>(`/api/devices/${deviceId}/lost`, { lost });
+  return !!res?.ok;
 }
 
 export async function getEvidence(deviceId: string): Promise<EvidenceItem[]> {

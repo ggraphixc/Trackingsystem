@@ -47,6 +47,12 @@ const TIERS = [
     text: "Blacklist the IMEI across ALL Nigerian networks with a police report + proof of purchase + ID. The phone becomes a brick — worthless to resell — killing the market that drives theft.",
     accent: "bg-emerald-50 text-emerald-600",
   },
+  {
+    icon: MapPinIcon,
+    title: "Community BLE relay (our network)",
+    text: "Your phone's agent broadcasts a Bluetooth beacon while it's on — even with the SIM out and data/Wi-Fi off. Any OTHER TrackNaija phone nearby hears it and reports a sighting with its own GPS. Mark the device LOST on the Agents page to activate alerts. Works while the phone is on; a fully powered-off phone emits nothing (that needs Pixel 8/9-class hardware + Google/Apple's closed networks).",
+    accent: "bg-violet-50 text-violet-600",
+  },
 ];
 
 function hoursSince(iso: string | null | undefined): number | null {
@@ -285,7 +291,7 @@ export default function OfflineRecoveryPage() {
         </div>
       </Card>
 
-      {/* The four tiers */}
+      {/* The five channels */}
       <div className="mb-8 grid gap-4 md:grid-cols-2">
         {TIERS.map((t) => (
           <Card key={t.title} className="p-5">
@@ -410,6 +416,13 @@ export default function OfflineRecoveryPage() {
                   : "none since pairing"}
               </p>
             </div>
+            <div>
+              <p className="text-[11px] uppercase tracking-wider text-ink-faint">Community sightings</p>
+              <p className="mt-0.5 flex items-center gap-1.5 text-sm font-medium text-ink">
+                <MapPinIcon className="h-4 w-4 text-violet-500" />
+                {selected.sightingCount ? `${selected.sightingCount} heard by other phones` : "none yet"}
+              </p>
+            </div>
           </div>
         ) : null}
 
@@ -503,6 +516,30 @@ export default function OfflineRecoveryPage() {
 
         <Kit
           step="5"
+          title="Activate the community beacon (TrackNaija) — mark the device LOST"
+          description="The beacon runs on the phone's own agent: it broadcasts over Bluetooth while the phone is on, needing no SIM, data or Wi-Fi. Other TrackNaija users' phones near it report sightings to your dashboard. Mark the device lost to start getting alert + push notifications for every sighting."
+        >
+          <ol className="list-inside space-y-2 text-sm text-ink-muted">
+            {[
+              "Open the Agents page and mark the device as LOST — beacon alerts activate.",
+              "Keep the TrackNaija app installed on other people's phones (Android 9+): the network only works where the app is installed.",
+              "Allow battery-optimization exemption in Android settings — OEM battery managers can kill background Bluetooth scans otherwise.",
+              "The beacon rotates daily (pseudonymous) so it can't be used to track a phone across days.",
+              "Honest limit: a powered-off phone emits no Bluetooth. Powered-off finding needs Pixel 8/9-class hardware and Google/Apple's private networks.",
+            ].map((s, i) => (
+              <li key={i} className="flex items-start gap-2">
+                <CheckCircleIcon className="mt-0.5 h-4 w-4 shrink-0 text-violet-500" />
+                {s}
+              </li>
+            ))}
+          </ol>
+          <Link href="/dashboard/agents" className="btn-secondary mt-3 inline-flex">
+            Open Agents page <ArrowRightIcon className="h-4 w-4" />
+          </Link>
+        </Kit>
+
+        <Kit
+          step="6"
           title="Enable offline finding (Google + Samsung) — do this NOW"
           description="The only offline channels that need no paperwork. If the lost phone's Bluetooth is on and offline finding was enabled, nearby devices relay its beacon — the phone's own data being off is irrelevant."
         >

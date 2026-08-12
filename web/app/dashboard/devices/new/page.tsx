@@ -5,10 +5,15 @@ import { useState } from "react";
 import { useLocalStorage } from "@/lib/storage";
 import { SEED_DEVICES } from "@/lib/data";
 import type { Device } from "@/lib/types";
-import { CheckCircleIcon, DeviceMobileIcon, SearchIcon } from "@/components/icons";
+import { CheckCircleIcon, DeviceMobileIcon, SearchIcon, SignalIcon } from "@/components/icons";
 import { Card, SectionTitle } from "@/components/ui";
 
-const BRANDS = ["HP", "Dell", "Lenovo", "ASUS", "Acer", "Apple", "Microsoft", "Toshiba", "Other"];
+const PHONE_BRANDS = [
+  "Samsung", "Tecno", "Infinix", "iPhone", "Itel", "Xiaomi", "Redmi", "Oppo", "Vivo", "Nokia", "Other",
+];
+const LAPTOP_BRANDS = [
+  "HP", "Dell", "Lenovo", "ASUS", "Acer", "Apple", "Microsoft", "Toshiba", "Other",
+];
 
 export default function NewDevicePage() {
   const router = useRouter();
@@ -16,9 +21,11 @@ export default function NewDevicePage() {
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saved, setSaved] = useState(false);
   const [form, setForm] = useState({
-    brand: "HP",
+    type: "phone" as "phone" | "laptop",
+    brand: "Samsung",
     model: "",
     color: "",
+    imei: "",
     serialNumber: "",
     ownerName: "",
     phone: "",
@@ -29,12 +36,24 @@ export default function NewDevicePage() {
     setErrors((e) => ({ ...e, [key]: "" }));
   }
 
+  function setType(type: "phone" | "laptop") {
+    setForm((f) => ({
+      ...f,
+      type,
+      brand: type === "phone" ? PHONE_BRANDS[0] : LAPTOP_BRANDS[0],
+    }));
+  }
+
   function validate(): boolean {
     const next: Record<string, string> = {};
     if (!form.model.trim()) next.model = "Model is required.";
-    if (!/^[A-Za-z0-9-]{5,25}$/.test(form.serialNumber.trim()))
+    if (form.type === "phone") {
+      if (!/^\d{15}$/.test(form.imei.trim()))
+        next.imei = "IMEI is exactly 15 digits — dial *#06# on the phone (or check the box).";
+    } else if (!/^[A-Za-z0-9-]{5,25}$/.test(form.serialNumber.trim())) {
       next.serialNumber =
         "Serial numbers are usually 5–25 letters, digits and dashes (e.g. XPS9530-B7F2K1).";
+    }
     if (!form.ownerName.trim()) next.ownerName = "Owner name is required.";
     if (!/^0\d{10}$/.test(form.phone.replace(/[\s-]/g, "")))
       next.phone = "Enter a valid Nigerian number, e.g. 08031234567.";
@@ -49,8 +68,10 @@ export default function NewDevicePage() {
       id: `dev-${Date.now()}`,
       brand: form.brand,
       model: form.model.trim(),
+      type: form.type,
       color: form.color.trim() || undefined,
-      serialNumber: form.serialNumber.trim().toUpperCase(),
+      imei: form.type === "phone" ? form.imei.trim() : undefined,
+      serialNumber: form.type === "laptop" ? form.serialNumber.trim().toUpperCase() : undefined,
       ownerName: form.ownerName.trim(),
       phone: form.phone.trim(),
       registeredAt: new Date().toISOString(),
@@ -63,7 +84,7 @@ export default function NewDevicePage() {
 
   return (
     <div className="mx-auto max-w-2xl animate-fade-up">
-      <SectionTitle eyebrow="Vault" title="Register a laptop or desktop" />
+      <SectionTitle eyebrow="Vault" title="Register a phone or laptop" />
 
       {saved ? (
         <Card className="flex flex-col items-center p-10 text-center">
@@ -78,11 +99,42 @@ export default function NewDevicePage() {
       ) : (
         <form onSubmit={submit} noValidate>
           <Card className="space-y-5 p-6">
+            {/* Device type */}
+            <div>
+              <label className="label">Device type</label>
+              <div className="grid grid-cols-2 gap-3">
+                <button
+                  type="button"
+                  onClick={() => setType("phone")}
+                  className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium transition ${
+                    form.type === "phone"
+                      ? "border-primary bg-primary/5 text-primary"
+                      : "border-slate-200 text-ink-muted hover:border-slate-300"
+                  }`}
+                >
+                  <DeviceMobileIcon className="h-5 w-5" />
+                  Phone
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setType("laptop")}
+                  className={`flex items-center justify-center gap-2 rounded-xl border px-4 py-3 text-sm font-medium transition ${
+                    form.type === "laptop"
+                      ? "border-violet-500 bg-violet-50 text-violet-700"
+                      : "border-slate-200 text-ink-muted hover:border-slate-300"
+                  }`}
+                >
+                  <SignalIcon className="h-5 w-5" />
+                  Laptop
+                </button>
+              </div>
+            </div>
+
             <div className="grid gap-5 sm:grid-cols-2">
               <div>
                 <label className="label" htmlFor="brand">Brand</label>
                 <select id="brand" className="input" value={form.brand} onChange={(e) => set("brand", e.target.value)}>
-                  {BRANDS.map((b) => (
+                  {(form.type === "phone" ? PHONE_BRANDS : LAPTOP_BRANDS).map((b) => (
                     <option key={b}>{b}</option>
                   ))}
                 </select>
@@ -92,7 +144,7 @@ export default function NewDevicePage() {
                 <input
                   id="model"
                   className="input"
-                  placeholder="e.g. EliteBook 840 G9, XPS 15"
+                  placeholder={form.type === "phone" ? "e.g. Camon 20 Pro, Galaxy A15" : "e.g. EliteBook 840 G9, XPS 15"}
                   value={form.model}
                   onChange={(e) => set("model", e.target.value)}
                   aria-invalid={!!errors.model}
@@ -101,31 +153,52 @@ export default function NewDevicePage() {
               </div>
             </div>
 
-            <div>
-              <label className="label" htmlFor="serialNumber">Serial number *</label>
-              <input
-                id="serialNumber"
-                className="input font-mono uppercase"
-                placeholder="e.g. XPS9530-B7F2K1"
-                value={form.serialNumber}
-                onChange={(e) => set("serialNumber", e.target.value)}
-                aria-invalid={!!errors.serialNumber}
-              />
-              <p className="mt-1.5 flex items-start gap-1.5 text-xs text-ink-muted">
-                <SearchIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" />
-                Find it via <span className="font-mono font-semibold">wmic bios get serialnumber</span>{" "}
-                (Windows Command Prompt), About This Mac (macOS) or{" "}
-                <span className="font-mono font-semibold">dmidecode -s system-serial-number</span>{" "}
-                (Linux) — or check the sticker under the laptop.
-              </p>
-              {errors.serialNumber ? (
-                <p className="mt-1 text-xs text-red-600">{errors.serialNumber}</p>
-              ) : null}
-            </div>
+            {form.type === "phone" ? (
+              <div>
+                <label className="label" htmlFor="imei">IMEI (15 digits) *</label>
+                <input
+                  id="imei"
+                  className="input font-mono uppercase"
+                  inputMode="numeric"
+                  placeholder="e.g. 354988071234567"
+                  value={form.imei}
+                  onChange={(e) => set("imei", e.target.value)}
+                  aria-invalid={!!errors.imei}
+                />
+                <p className="mt-1.5 flex items-start gap-1.5 text-xs text-ink-muted">
+                  <SearchIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" />
+                  Dial <span className="font-mono font-semibold">*#06#</span> on the phone, or find it on
+                  the retail box. The IMEI is what the police and carriers use to trace a stolen phone.
+                </p>
+                {errors.imei ? <p className="mt-1 text-xs text-red-600">{errors.imei}</p> : null}
+              </div>
+            ) : (
+              <div>
+                <label className="label" htmlFor="serialNumber">Serial number *</label>
+                <input
+                  id="serialNumber"
+                  className="input font-mono uppercase"
+                  placeholder="e.g. XPS9530-B7F2K1"
+                  value={form.serialNumber}
+                  onChange={(e) => set("serialNumber", e.target.value)}
+                  aria-invalid={!!errors.serialNumber}
+                />
+                <p className="mt-1.5 flex items-start gap-1.5 text-xs text-ink-muted">
+                  <SearchIcon className="mt-0.5 h-3.5 w-3.5 shrink-0 text-accent" />
+                  Find it via <span className="font-mono font-semibold">wmic bios get serialnumber</span>{" "}
+                  (Windows Command Prompt), About This Mac (macOS) or{" "}
+                  <span className="font-mono font-semibold">dmidecode -s system-serial-number</span>{" "}
+                  (Linux) — or check the sticker under the laptop.
+                </p>
+                {errors.serialNumber ? (
+                  <p className="mt-1 text-xs text-red-600">{errors.serialNumber}</p>
+                ) : null}
+              </div>
+            )}
 
             <div>
               <label className="label" htmlFor="color">Colour / finish</label>
-              <input id="color" className="input" placeholder="e.g. Silver, Black" value={form.color} onChange={(e) => set("color", e.target.value)} />
+              <input id="color" className="input" placeholder="e.g. Serenity Blue, Silver" value={form.color} onChange={(e) => set("color", e.target.value)} />
             </div>
 
             <div className="grid gap-5 sm:grid-cols-2">
@@ -148,7 +221,7 @@ export default function NewDevicePage() {
             </button>
             <button type="submit" className="btn-secondary">
               <DeviceMobileIcon className="h-4 w-4" />
-              Protect this device
+              Protect this {form.type}
             </button>
           </div>
         </form>

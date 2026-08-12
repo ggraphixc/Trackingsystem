@@ -16,8 +16,12 @@ export interface Device {
   id: string;
   brand: string;
   model: string;
+  /** phone | laptop */
+  type: "phone" | "laptop";
   /** Laptop serial number / asset tag (laptops have no IMEI). */
-  serialNumber: string;
+  serialNumber?: string;
+  /** Phone IMEI (phones have no serial number). */
+  imei?: string;
   color?: string;
   ownerName: string;
   phone: string;

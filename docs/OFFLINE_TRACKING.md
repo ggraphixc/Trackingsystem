@@ -89,6 +89,46 @@ the thief's hands with data off, the agent keeps working locally.
   the dashboard shows "reconnected" and the evidence gallery fills with what
   the phone saw while it was "dead".
 
+### 5 · Community BLE relay — our own Tile-style network (Android)
+
+**Physics:** Bluetooth doesn't need the internet, a SIM, or Wi-Fi. A phone
+whose SIM has been pulled and data switched off still emits BLE — and any
+nearby phone running the TrackNaija app can hear it. The scanning phone then
+uses **its own** internet to report the sighting with its own GPS position.
+
+**This is the channel we BUILD (the user's Bluetooth idea, done right):**
+
+- **Advertise:** the Android agent broadcasts a short pseudonymous beacon ID
+  (service UUID + 12-hex rotating ID) from the existing foreground service.
+  The ID is derived from the deviceId + the current **day bucket** — it
+  rotates daily, so a listener can't track a phone across days
+  (`Beacon.kt` ↔ `server/beacon.js` share the hash).
+- **Scan (duty-cycled):** the same app scans ~12 s every ~5 min for other
+  TrackNaija beacons and reports sightings to `POST /api/sightings` with the
+  scanner's own position — no device identity attached.
+- **Alert:** when the owner has **marked the device lost** (Agents page →
+  *Lost*), every sighting raises an in-app alert + push: *"your phone was
+  just seen at 6.52°N, 3.38°E"* — a location for a phone that has no data.
+- **Wi-Fi + cell fingerprints ride along:** every fix now records the nearby
+  Wi-Fi BSSIDs/SSIDs and cell towers, so the dashboard can recognise where a
+  device has been by its *network surroundings*, not just coordinates — and
+  a laptop reconnecting to a cafe's Wi-Fi becomes identifiable.
+
+**Honest limits (this matters):**
+- A **fully powered-off** phone emits no Bluetooth. Powered-off finding only
+  exists on high-end silicon (Pixel 8/9, iPhone 11+, flagship Samsungs) via
+  Apple/Google's **closed** networks — no third-party app can see or emit
+  that. Our relay works while the phone is *on* (SIM out, data off — the
+  exact repair-shop/usage window in Nigeria).
+- **iOS does not allow background BLE advertising** from third-party apps, so
+  the community relay is Android-to-Android for now (iPhones still get
+  channels 1–4 + the Find My checklist).
+- OEM battery managers (Samsung, Tecno, Xiaomi) may kill background scans
+  unless the user exempts the app from battery optimization — the app should
+  prompt for this.
+- Network effect: the relay is only as dense as the number of installed
+  TrackNaija apps. It is a growth story, not a blocker.
+
 ### 4 · IMEI blacklist (NCC-DMS / CEIR) — the deterrent
 
 **Physics of the market:** phone theft in Nigeria is driven by resale value.
@@ -157,6 +197,11 @@ Thief turns data/Wi-Fi OFF
         │        └─► phone touches ANY network → burst sync → dashboard:
         │             fixes, webcam photos, SIM-change events, "reconnected" alert
         │
+        ├─► [5] Community BLE relay (ours) — phone on, SIM out, data off:
+        │        other TrackNaija phones hear its beacon → report sighting
+        │        with THEIR GPS → owner gets "seen at …" push/SMS alert
+        │        (requires the device to be marked LOST; Android-to-Android)
+        │
         └─► [4] IMEI blacklist via NCC-DMS/CEIR → phone is a brick
                  even if never located, the theft was pointless
 ```
@@ -165,9 +210,15 @@ Thief turns data/Wi-Fi OFF
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /api/devices/:id/batch` | `{items:[{type:"fix"|"evidence"|"event", …}]}` — the vault burst sync (≤100 items) |
+| `POST /api/devices/:id/batch` | `{items:[{type:"fix"|"evidence"|"event"|…, …}]}` — the vault burst sync (≤100 items) |
 | `POST /api/devices/:id/events` | `{event:{type, detail}}` — e.g. `sim_change` |
-| `GET /api/devices` / `GET /api/devices/:id` | now include `imei`, `reconnectedAt`, `events[]` |
+| `POST /api/sightings` | community relay: `{beacon, lat, lng, accuracy}` from an anonymous scanner — always answers 201 (never reveals whether a beacon is known) |
+| `POST /api/devices/:id/lost` | `{lost: bool}` — mark lost (beacon alerts active) / found |
+| `GET /api/devices/:id/sightings` | community sightings for a device, newest first |
+| `GET /api/devices` / `GET /api/devices/:id` | now include `imei`, `reconnectedAt`, `events[]`, `type` (phone/laptop), `lost`, `operator` (from SIM fingerprint), `sightings[]` |
+
+Fixes may now carry `networks[]` (Wi-Fi BSSIDs/SSIDs) and `cells[]` (towers)
+— the Wi-Fi/cell fingerprint — from both the Android and desktop agents.
 
 `storeFix` also moves `lastSeenAt` forward on every fix (fixing a bug where
 "last seen" froze after the first report) and emits a `reconnected` event

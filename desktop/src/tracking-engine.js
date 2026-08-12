@@ -79,14 +79,80 @@ class TrackingEngine extends EventEmitter {
     });
   }
 
+  /**
+   * Parse `netsh wlan show networks mode=bssid` (Windows), `airport -s`
+   * (macOS) or `nmcli` (Linux) output into AP records {bssid, ssid, rssi}.
+   * This is the laptop's "Wi-Fi fingerprint" — the set of access points a
+   * stolen laptop sees is itself a locate signal (a cafe, an office, a home),
+   * and it is uploaded with every fix so the dashboard can match by network,
+   * not just coordinates.
+   */
   parseWifi(raw) {
     const aps = [];
-    const macRe = /([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/g;
-    const macs = raw.match(macRe) || [];
-    for (const mac of macs.slice(0, 12)) {
-      aps.push({ bssid: mac.toUpperCase(), rssi: -40 - Math.floor(Math.random() * 45) });
+    const seen = new Set();
+
+    // netsh format:
+    //   SSID 1 : Cafe-Wifi
+    //   BSSID 1 : a0:36:9f:11:22:33
+    //   Signal : 85%
+    //
+    // nmcli -t format:
+    //   Cafe-Wifi:a0:36:9f:11:22:33:...
+    const blocks = raw.split(/\r?\n/);
+    let cur = null;
+    const flush = () => {
+      if (cur && cur.bssid && !seen.has(cur.bssid)) {
+        seen.add(cur.bssid);
+        aps.push(cur);
+      }
+      cur = null;
+    };
+    for (const line of blocks) {
+      const ssidM = line.match(/^\s*SSID\s*\d*\s*:\s*(.+)$/i);
+      if (ssidM) {
+        flush();
+        cur = { ssid: ssidM[1].trim(), bssid: null, rssi: null };
+        continue;
+      }
+      const bssidM = line.match(/([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/);
+      if (bssidM && cur) {
+        cur.bssid = bssidM[0].toUpperCase();
+        continue;
+      }
+      const sigM = line.match(/Signal\s*:\s*(\d+)%/i);
+      if (sigM && cur) {
+        // Windows signal % maps roughly to RSSI: 100% ≈ -40 dBm, 50% ≈ -80.
+        cur.rssi = -40 - Math.round((100 - Number(sigM[1])) * 0.8);
+        continue;
+      }
+      // nmcli: first field is SSID, second is BSSID (colon-separated).
+      const nmcli = line.split(":");
+      if (nmcli.length >= 2 && /^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/.test(nmcli[1])) {
+        flush();
+        cur = { ssid: nmcli[0].trim(), bssid: nmcli[1].toUpperCase(), rssi: null };
+        flush();
+      }
     }
-    return aps;
+    flush();
+
+    // Fallback (macOS `airport -s` / anything we could not parse): pull raw
+    // MACs so we still get a fingerprint even without names or signal.
+    if (aps.length === 0) {
+      const macRe = /([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}/g;
+      for (const mac of raw.match(macRe) || []) {
+        const upper = mac.toUpperCase();
+        if (!seen.has(upper)) {
+          seen.add(upper);
+          aps.push({ bssid: upper, ssid: null, rssi: null });
+        }
+      }
+    }
+
+    return aps.slice(0, 12).map((ap) => ({
+      bssid: ap.bssid,
+      ssid: ap.ssid || null,
+      rssi: ap.rssi ?? -60,
+    }));
   }
 
   /* ---------------- Signal 2: IP geolocation ---------------- */
@@ -133,7 +199,7 @@ class TrackingEngine extends EventEmitter {
         accuracy: 30 + Math.round(Math.random() * 40), // ~30–70 m
         source: "wifi",
         ipAddress: ip ? ip.ip : null,
-        networks: wifi.length,
+        networks: wifi, // the full fingerprint [{bssid, ssid, rssi}]
         timestamp: now,
         confidence: 80,
       };
@@ -146,7 +212,7 @@ class TrackingEngine extends EventEmitter {
         accuracy: 1200, // IP geolocation is city-level
         source: "ip",
         ipAddress: ip.ip,
-        networks: 0,
+        networks: [],
         timestamp: now,
         confidence: 55,
       };

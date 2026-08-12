@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { PairedDevice } from "@/lib/api";
-import { AlertTriangleIcon, BellIcon, WifiIcon, XMarkIcon } from "@/components/icons";
+import { AlertTriangleIcon, BellIcon, MapPinIcon, WifiIcon, XMarkIcon } from "@/components/icons";
 import { Card } from "@/components/ui";
 
 interface AlertBanner {
@@ -11,17 +11,20 @@ interface AlertBanner {
   hostname: string;
   at: string;
   gapHours?: number;
+  lat?: number;
+  lng?: number;
 }
 
-const FRESH_WINDOW_MIN = 15; // only alert on events within this window
+const FRESH_WINDOW_MIN = 30; // only alert on events within this window
 
 /**
- * Device alerts — the "a stolen phone surfaced online" signal.
+ * Device alerts — the "a stolen phone surfaced" signal.
  *
- * - A sky banner fires when a device that had gone quiet reconnects.
- * - A red, high-priority banner fires when a device's SIM card is swapped —
- *   strong evidence the phone is being reused by someone else.
- * - An activity feed lists the most recent reconnected / SIM-change events.
+ * - Sky banner: a device that had gone quiet reconnected (fixes synced).
+ * - Red banner: a device's SIM was swapped — strong evidence of reuse.
+ * - Violet banner: a TrackNaija phone heard a LOST device's Bluetooth beacon
+ *   (community relay) — a location for the owner with no data/Wi-Fi needed.
+ * - An activity feed lists the most recent events + sightings.
  *
  * Renders nothing when there is nothing to alert, so quiet dashboards stay
  * clean. Shared by the Overview and Agents pages.
@@ -29,6 +32,7 @@ const FRESH_WINDOW_MIN = 15; // only alert on events within this window
 export default function DeviceAlerts({ devices }: { devices: PairedDevice[] }) {
   const [reconnectAlert, setReconnectAlert] = useState<AlertBanner | null>(null);
   const [simAlert, setSimAlert] = useState<AlertBanner | null>(null);
+  const [sightingAlert, setSightingAlert] = useState<AlertBanner | null>(null);
   // Remember the last timestamp seen per device so each *new* event triggers
   // its banner exactly once.
   const seen = useRef<Record<string, string>>({});
@@ -53,23 +57,88 @@ export default function DeviceAlerts({ devices }: { devices: PairedDevice[] }) {
         }
         seen.current[key] = e.at;
       }
+      // Community sightings — a lost device heard by another TrackNaija phone.
+      const sightings = d.sightings ?? [];
+      for (const s of sightings.slice(0, 3)) {
+        const key = `${d.deviceId}:sighting:${s.receivedAt ?? s.at}`;
+        if (seen.current[key] === s.receivedAt) continue;
+        const ageMin = (Date.now() - new Date(s.receivedAt ?? s.at).getTime()) / 60000;
+        if (ageMin < FRESH_WINDOW_MIN) {
+          setSightingAlert({
+            deviceId: d.deviceId,
+            hostname: d.hostname ?? "a device",
+            at: s.at,
+            lat: s.lat,
+            lng: s.lng,
+          });
+        }
+        seen.current[key] = s.receivedAt;
+      }
     }
   }, [devices]);
 
-  const activity = devices
-    .flatMap((d) =>
-      (d.events ?? []).map((e) => ({
-        ...e,
+  // Union of event + sighting rows, flattened into one timeline.
+  type ActivityRow = {
+    type: string;
+    at: string;
+    deviceId: string;
+    hostname: string;
+    detail?: Record<string, unknown>;
+  };
+  const activity: ActivityRow[] = devices
+    .flatMap((d) => {
+      const eventRows: ActivityRow[] = (d.events ?? [])
+        .filter((e) => e.type === "reconnected" || e.type === "sim_change")
+        .map((e) => ({
+          type: e.type,
+          at: e.at,
+          deviceId: d.deviceId,
+          hostname: d.hostname ?? d.deviceId.slice(0, 8),
+          detail: e.detail,
+        }));
+      const sightingRows: ActivityRow[] = (d.sightings ?? []).map((s) => ({
+        type: "sighting",
+        at: s.at,
         deviceId: d.deviceId,
         hostname: d.hostname ?? d.deviceId.slice(0, 8),
-      })),
-    )
-    .filter((e) => e.type === "reconnected" || e.type === "sim_change")
+        detail: { lat: s.lat, lng: s.lng },
+      }));
+      return [...eventRows, ...sightingRows];
+    })
     .sort((a, b) => b.at.localeCompare(a.at))
-    .slice(0, 5);
+    .slice(0, 6);
 
   return (
     <>
+      {/* Community sighting — a lost phone heard by another TrackNaija phone */}
+      {sightingAlert ? (
+        <div className="mb-6 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
+          <div className="flex items-start gap-3">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-violet-100 text-violet-600">
+              <MapPinIcon className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="text-sm font-semibold text-violet-900">
+                {sightingAlert.hostname} was just seen by a TrackNaija phone nearby
+              </p>
+              <p className="mt-0.5 text-xs text-violet-700">
+                Another user{`'`}s phone heard its Bluetooth beacon at{" "}
+                {sightingAlert.lat?.toFixed(4)}°, {sightingAlert.lng?.toFixed(4)}° ({new Date(sightingAlert.at).toLocaleTimeString()})
+                — even with the SIM out and data off, the beacon keeps broadcasting. Go there now, and
+                have the police meet you if possible.
+              </p>
+            </div>
+          </div>
+          <button
+            className="rounded-lg p-1.5 text-violet-500 hover:bg-violet-100"
+            onClick={() => setSightingAlert(null)}
+            aria-label="Dismiss alert"
+          >
+            <XMarkIcon className="h-4 w-4" />
+          </button>
+        </div>
+      ) : null}
+
       {/* SIM swap — the phone is being reused. Red, top of the pile. */}
       {simAlert ? (
         <div className="mb-6 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3">
@@ -136,31 +205,44 @@ export default function DeviceAlerts({ devices }: { devices: PairedDevice[] }) {
           <ul className="mt-3 divide-y divide-slate-100">
             {activity.map((a, i) => {
               const isSim = a.type === "sim_change";
+              const isSighting = a.type === "sighting";
               return (
                 <li key={`${a.deviceId}-${a.at}-${i}`} className="flex items-center gap-2.5 py-2">
                   <span
                     className={`grid h-7 w-7 shrink-0 place-items-center rounded-lg ${
-                      isSim ? "bg-red-50 text-red-500" : "bg-sky-50 text-sky-500"
+                      isSim
+                        ? "bg-red-50 text-red-500"
+                        : isSighting
+                          ? "bg-violet-50 text-violet-500"
+                          : "bg-sky-50 text-sky-500"
                     }`}
                   >
                     {isSim ? (
                       <AlertTriangleIcon className="h-3.5 w-3.5" />
+                    ) : isSighting ? (
+                      <MapPinIcon className="h-3.5 w-3.5" />
                     ) : (
                       <WifiIcon className="h-3.5 w-3.5" />
                     )}
                   </span>
                   <span
                     className={`min-w-0 truncate text-sm ${
-                      isSim ? "font-medium text-red-700" : "text-ink"
+                      isSim
+                        ? "font-medium text-red-700"
+                        : isSighting
+                          ? "font-medium text-violet-700"
+                          : "text-ink"
                     }`}
                   >
                     {isSim
                       ? `${a.hostname} — SIM changed`
-                      : `${a.hostname} reconnected after ${
-                          a.detail && typeof a.detail.gapHours === "number"
-                            ? `${a.detail.gapHours}h`
-                            : "an outage"
-                        } offline`}
+                      : isSighting
+                        ? `${a.hostname} — seen by community at ${typeof a.detail?.lat === "number" ? a.detail.lat.toFixed(4) : "?"}°, ${typeof a.detail?.lng === "number" ? a.detail.lng.toFixed(4) : "?"}°`
+                        : `${a.hostname} reconnected after ${
+                            a.detail && typeof a.detail.gapHours === "number"
+                              ? `${a.detail.gapHours}h`
+                              : "an outage"
+                          } offline`}
                   </span>
                   <span className="ml-auto shrink-0 font-mono text-[11px] text-ink-faint">
                     {new Date(a.at).toLocaleString("en-NG")}

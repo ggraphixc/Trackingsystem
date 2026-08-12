@@ -41,6 +41,7 @@ class TrackingService : Service() {
     private var lastOfflineEvidenceAt = 0L
     private var lastSimFingerprint: String? = null
     private var pendingSimFingerprint: String? = null
+    private var lastCommunityScanAt = 0L
     private var connectivityCallback: ConnectivityManager.NetworkCallback? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -72,6 +73,7 @@ class TrackingService : Service() {
                     .unregisterNetworkCallback(cb)
             }
         }
+        Beacon.stopAdvertising()
         scope.cancel()
         super.onDestroy()
     }
@@ -123,33 +125,52 @@ class TrackingService : Service() {
 
     /**
      * Upload everything in the vault as one batch. Any connectivity is enough
-     * — this is the "the stolen phone surfaced online" moment.
+     * — this is the "the stolen phone surfaced online" moment. Community
+     * sightings are posted to the anonymous /api/sightings endpoint (they are
+     * NOT bound to this device), the rest go to the device batch.
      */
     private suspend fun flushVault() {
         val state = AppState(this)
-        val deviceId = state.deviceId ?: return
+        val deviceId = state.deviceId
         val pending = vault.all()
         if (pending.isEmpty()) return
         // Snapshot the items we are about to upload so we only remove exactly
         // these afterwards — anything pushed mid-upload survives.
         val queuedAts = pending.map { it.optString("queuedAt") }.filter { it.isNotEmpty() }.toSet()
+        val client = SyncClient(state.serverUrl)
+        val uploaded = mutableSetOf<String>()
+        val deviceQueued = mutableSetOf<String>()
         val items = mutableListOf<JSONObject>()
         for (item in pending) {
             val type = item.optString("type")
             val payload = item.optJSONObject("payload") ?: continue
             when (type) {
-                "fix" -> items.add(JSONObject().put("type", "fix").put("fix", payload))
-                "evidence" -> items.add(
-                    JSONObject().put("type", "evidence").put("dataUrl", payload.optString("dataUrl"))
-                )
-                "event" -> items.add(JSONObject().put("type", "event").put("event", payload))
+                "fix" -> {
+                    items.add(JSONObject().put("type", "fix").put("fix", payload))
+                    deviceQueued.add(item.optString("queuedAt"))
+                }
+                "evidence" -> {
+                    items.add(JSONObject().put("type", "evidence").put("dataUrl", payload.optString("dataUrl")))
+                    deviceQueued.add(item.optString("queuedAt"))
+                }
+                "event" -> {
+                    items.add(JSONObject().put("type", "event").put("event", payload))
+                    deviceQueued.add(item.optString("queuedAt"))
+                }
+                "sighting" -> {
+                    // Anonymous endpoint — no deviceId needed. The server always
+                    // answers 201, so any non-null response counts as delivered.
+                    if (client.postSighting(payload)) uploaded.add(item.optString("queuedAt"))
+                }
             }
         }
-        if (items.isEmpty()) return
-        // True only when the server accepted every item — a partial failure
-        // keeps the failed entries in the vault for the next retry.
-        val ok = SyncClient(state.serverUrl).postBatch(deviceId, items)
-        if (ok) vault.removeUploaded(queuedAts)
+        // Device-bound items upload as one batch and are only removed when the
+        // server accepted EVERY one — a partial failure keeps them for retry.
+        // If the phone isn't paired yet, they stay in the vault untouched.
+        if (items.isNotEmpty() && deviceId != null && client.postBatch(deviceId, items)) {
+            uploaded.addAll(deviceQueued)
+        }
+        if (uploaded.isNotEmpty()) vault.removeUploaded(uploaded)
     }
 
     /** Capture a fix on the battery-aware interval; queue it if offline. */
@@ -157,6 +178,38 @@ class TrackingService : Service() {
         val state = AppState(this@TrackingService)
         val ladder = SignalLadder(this@TrackingService)
         while (isActive) {
+            // Community beacon: broadcast ONLY while the device is marked LOST
+            // — a privacy-first design. A phone is never silently findable; the
+            // owner arms the beacon (app switch, or the dashboard "Mark lost"
+            // button which queues a `lost` command handled below). While armed
+            // it broadcasts even with no SIM/data, so other TrackNaija phones
+            // can report sightings.
+            if (state.lostMode) {
+                state.deviceId?.let { Beacon.startAdvertising(this@TrackingService, it) }
+            } else {
+                Beacon.stopAdvertising()
+            }
+
+            // Community relay, duty-cycled: scan ~12 s every ~5 min for other
+            // lost phones' beacons, then report sightings with our position.
+            val now = System.currentTimeMillis()
+            if (now - lastCommunityScanAt > 5 * 60_000L) {
+                lastCommunityScanAt = now
+                val heard = Beacon.scanOnce(this@TrackingService, 12_000)
+                if (heard.isNotEmpty()) {
+                    val myFix = state.lastFix()
+                    for (beacon in heard) {
+                        val sighting = Beacon.sightingJson(beacon, myFix) ?: continue
+                        val uploaded = try {
+                            SyncClient(state.serverUrl).postSighting(sighting)
+                        } catch (_: Exception) {
+                            false
+                        }
+                        if (!uploaded) vault.push("sighting", state.deviceId, sighting)
+                    }
+                }
+            }
+
             val fix = ladder.capture()
             if (fix != null) {
                 val json = fix.toJson()
@@ -262,6 +315,12 @@ class TrackingService : Service() {
                 for (cmd in commands) {
                     state.lastCommandId = cmd.optString("id")
                     when (cmd.optString("type")) {
+                        // Owner marked the device LOST from the dashboard — arm
+                        // the community beacon on the phone itself (works even
+                        // after the phone left the owner's hands, as long as the
+                        // agent service is still alive). "found" disarms it.
+                        "lost" -> state.lostMode = true
+                        "found" -> state.lostMode = false
                         "alarm" -> CommandHandler.playAlarm(this@TrackingService)
                         "webcam" -> CommandHandler.captureWebcam(this@TrackingService) { dataUrl ->
                             if (dataUrl != null) {

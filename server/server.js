@@ -35,6 +35,7 @@ const { randomUUID } = require("crypto");
 const { createStorage } = require("./storage");
 const { getVapidKeys, notifyAll } = require("./push");
 const { maskPhone, normalizePhone, sendSms, smsStatus } = require("./sms");
+const { resolveBeacon } = require("./beacon");
 
 // Zero-dependency .env loader (server/.env — gitignored). Runs before
 // storage decides its mode so DATABASE_URL is honoured. Existing process
@@ -69,6 +70,39 @@ const DEFAULT_SETTINGS = {
 };
 
 let store = { devices: {}, pairCodes: {}, alerts: [], pushSubscriptions: [], settings: DEFAULT_SETTINGS };
+
+// Nigerian mobile operators by MNC (MCC 621). The Android agent fingerprints
+// the SIM as "<mcc><mnc>|<state>" — decode it so the dashboard can show the
+// operator on a phone, and name the operator a swapped-in SIM was replaced by.
+const NIGERIA_OPERATORS = {
+  "01": "MTEL",
+  "20": "MTN",
+  "25": "Visafone",
+  "30": "Airtel",
+  "50": "Glo",
+  "60": "9mobile",
+  "99": "Smile",
+};
+
+function operatorName(fingerprint) {
+  const mccmnc = String(fingerprint || "").split("|")[0].trim();
+  const m = mccmnc.match(/^(\d{3})(\d+)$/);
+  if (!m) return mccmnc ? `MCC ${mccmnc}` : null;
+  if (m[1] === "621") return NIGERIA_OPERATORS[m[2]] || `MNC ${m[2]}`;
+  return `${m[1]} · ${NIGERIA_OPERATORS[m[2]] || m[2]}`;
+}
+
+/** The operator the device is currently (or last) running a SIM from. */
+function deviceOperator(dev) {
+  const sim = (dev.events || []).filter((e) => e.type === "sim_change").pop();
+  const fp = sim && sim.detail ? sim.detail.to || sim.detail.from : null;
+  return operatorName(fp);
+}
+
+/** Phones run the Android/iOS agent; everything else is a laptop/desktop. */
+function deviceType(dev) {
+  return ["android", "ios"].includes(dev.platform) ? "phone" : "laptop";
+}
 const storage = createStorage();
 
 let saveTimer = null;
@@ -95,6 +129,8 @@ function device(id) {
       evidence: [],
       commands: [],
       events: [],
+      sightings: [],
+      lost: false,
     };
   }
   return store.devices[id];
@@ -141,7 +177,7 @@ function storeEvent(dev, event) {
  * Push an in-app alert into the alerts store (capped ring buffer), then ping
  * every registered push subscription so the owner's browser notifies them.
  */
-function raiseAlert(type, dev, body) {
+function raiseAlert(type, dev, body, opts = {}) {
   store.alerts = store.alerts || [];
   store.alerts.push({
     id: randomUUID(),
@@ -156,7 +192,37 @@ function raiseAlert(type, dev, body) {
   saveStore();
   // Fire-and-forget: never block the request on push or SMS delivery.
   notifyAll(store, saveStore).catch(() => {});
-  smsNotify(store, store.alerts[store.alerts.length - 1]);
+  // opts.sms === false (community sightings) keeps SMS budget for the truly
+  // urgent signals — every sighting could otherwise drain the owner's quota.
+  if (opts.sms !== false) smsNotify(store, store.alerts[store.alerts.length - 1]);
+}
+
+/**
+ * A community BLE sighting: another TrackNaija phone heard this device's
+ * beacon. Privacy-first: sightings are ONLY recorded for devices the owner
+ * has marked LOST (the beacon only broadcasts while lost), and alerts are
+ * throttled to one per 30 min per device so a noisy area or a beacon replay
+ * can't flood the owner's phone.
+ */
+const SIGHTING_ALERT_MIN_MS = 30 * 60_000;
+
+function storeSighting(dev, sighting) {
+  if (!dev.lost) return; // never store sightings for non-lost devices
+  dev.sightings = dev.sightings || [];
+  dev.sightings.push({ ...sighting, receivedAt: new Date().toISOString() });
+  if (dev.sightings.length > 50) dev.sightings = dev.sightings.slice(-50);
+  saveStore();
+  const now = Date.now();
+  if (dev.lastSightingAlertAt && now - new Date(dev.lastSightingAlertAt).getTime() < SIGHTING_ALERT_MIN_MS) {
+    return;
+  }
+  dev.lastSightingAlertAt = new Date().toISOString();
+  raiseAlert(
+    "sighting",
+    dev,
+    `${dev.hostname || "Your device"} was just seen by a TrackNaija phone nearby (${sighting.lat.toFixed(4)}°, ${sighting.lng.toFixed(4)}°). A community member heard its Bluetooth beacon — move now.`,
+    { sms: false },
+  );
 }
 
 /**
@@ -342,6 +408,30 @@ async function route(req, res) {
     return json(res, 200, result);
   }
 
+  // POST /api/sightings { beacon, lat, lng, accuracy, at? } — the community
+  // BLE relay: any TrackNaija phone that hears a device's beacon reports it
+  // here with the SCANNER's GPS position. Anonymous (the scanner may be any
+  // user's phone) — always answer 201 so nobody can probe which beacons exist.
+  if (isPost && url.pathname === "/api/sightings") {
+    const body = await readBody(req);
+    const beacon = String(body.beacon || "").trim().toLowerCase();
+    const lat = Number(body.lat);
+    const lng = Number(body.lng);
+    if (beacon && Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      const dev = resolveBeacon(store, beacon);
+      if (dev) {
+        storeSighting(dev, {
+          beacon,
+          lat,
+          lng,
+          accuracy: Number.isFinite(Number(body.accuracy)) ? Number(body.accuracy) : null,
+          at: typeof body.at === "string" ? body.at : new Date().toISOString(),
+        });
+      }
+    }
+    return json(res, 201, { ok: true });
+  }
+
   // POST /api/pair/register { label } → { code, deviceId }
   if (isPost && parts.join("/") === "api/pair/register") {
     const body = await readBody(req);
@@ -387,6 +477,10 @@ async function route(req, res) {
       commandCount: d.commands.length,
       evidenceCount: d.evidence.length,
       events: (d.events || []).slice(-20),
+      type: deviceType(d),
+      lost: !!d.lost,
+      operator: deviceOperator(d),
+      sightingCount: (d.sightings || []).length,
     }));
     return json(res, 200, list);
   }
@@ -459,6 +553,30 @@ async function route(req, res) {
       return json(res, 200, [...(dev.events || [])].reverse());
     }
 
+    // POST /api/devices/:id/lost { lost: bool } — owner marks the device lost.
+    // Sets the flag (sightings then raise alerts) AND queues a `lost`/`found`
+    // command so the phone agent arms/disarms its community beacon itself —
+    // the beacon is only ever broadcast while lost (privacy-first).
+    if (action === "lost" && isPost) {
+      const body = await readBody(req);
+      dev.lost = !!body.lost;
+      if (!dev.commands.some((c) => c.type === (dev.lost ? "lost" : "found") && !c.executedAt)) {
+        dev.commands.push({
+          id: randomUUID(),
+          type: dev.lost ? "lost" : "found",
+          createdAt: new Date().toISOString(),
+          executedAt: null,
+        });
+      }
+      saveStore();
+      return json(res, 200, { ok: true, lost: dev.lost });
+    }
+
+    // GET /api/devices/:id/sightings — community BLE sightings, newest first.
+    if (action === "sightings" && !isPost) {
+      return json(res, 200, [...(dev.sightings || [])].reverse());
+    }
+
     if (action === "evidence") {
       if (isPost) {
         const body = await readBody(req);
@@ -526,6 +644,11 @@ async function route(req, res) {
         evidenceCount: dev.evidence.length,
         commandCount: dev.commands.length,
         events: (dev.events || []).slice(-20),
+        sightings: (dev.sightings || []).slice(-10).reverse(),
+        type: deviceType(dev),
+        lost: !!dev.lost,
+        operator: deviceOperator(dev),
+        sightingCount: (dev.sightings || []).length,
       });
     }
 

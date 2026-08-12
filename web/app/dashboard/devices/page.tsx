@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useLocalStorage } from "@/lib/storage";
 import { SEED_DEVICES, formatDate } from "@/lib/data";
 import type { Device } from "@/lib/types";
-import { DeviceMobileIcon, PlusIcon } from "@/components/icons";
+import { DeviceMobileIcon, PlusIcon, SignalIcon } from "@/components/icons";
 import { Card, DeviceStatusBadge, EmptyState, SectionTitle } from "@/components/ui";
 
 const SOURCE_LABEL: Record<string, string> = {
@@ -33,7 +33,7 @@ export default function DevicesPage() {
         <EmptyState
           icon={<DeviceMobileIcon className="h-7 w-7" />}
           title="No devices yet"
-          body="Register your laptop now so we can help find it if it ever goes missing. It takes 30 seconds."
+          body="Register your phone or laptop now so we can help find it if it ever goes missing. It takes 30 seconds."
           action={
             <Link href="/dashboard/devices/new" className="btn-secondary">
               Register your first device
@@ -42,17 +42,34 @@ export default function DevicesPage() {
         />
       ) : (
         <div className="grid gap-4 md:grid-cols-2">
-          {devices.map((d) => (
+          {devices.map((d) => {
+            const isPhone = d.type === "phone";
+            return (
             <Card key={d.id} hover className="p-5">
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary/10 text-primary">
-                    <DeviceMobileIcon className="h-6 w-6" />
+                  <span
+                    className={`grid h-11 w-11 place-items-center rounded-xl ${
+                      isPhone ? "bg-primary/10 text-primary" : "bg-violet-50 text-violet-600"
+                    }`}
+                  >
+                    {isPhone ? (
+                      <DeviceMobileIcon className="h-6 w-6" />
+                    ) : (
+                      <SignalIcon className="h-6 w-6" />
+                    )}
                   </span>
                   <div>
-                    <p className="font-semibold text-ink">
-                      {d.brand} {d.model}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-semibold text-ink">
+                        {d.brand} {d.model}
+                      </p>
+                      <span
+                        className={`chip ${isPhone ? "bg-primary/10 text-primary" : "bg-violet-50 text-violet-600"}`}
+                      >
+                        {isPhone ? "Phone" : "Laptop"}
+                      </span>
+                    </div>
                     <p className="text-xs text-ink-muted">{d.color ?? "—"}</p>
                   </div>
                 </div>
@@ -61,8 +78,10 @@ export default function DevicesPage() {
 
               <dl className="mt-4 grid grid-cols-2 gap-3 border-t border-slate-100 pt-4 text-sm">
                 <div>
-                  <dt className="text-xs text-ink-faint">Serial number</dt>
-                  <dd className="mt-0.5 font-mono text-xs text-ink">{d.serialNumber}</dd>
+                  <dt className="text-xs text-ink-faint">{isPhone ? "IMEI" : "Serial number"}</dt>
+                  <dd className="mt-0.5 font-mono text-xs text-ink">
+                    {isPhone ? d.imei ?? "—" : d.serialNumber}
+                  </dd>
                 </div>
                 <div>
                   <dt className="text-xs text-ink-faint">Registered</dt>
@@ -93,12 +112,13 @@ export default function DevicesPage() {
                 </div>
               ) : (
                 <p className="mt-4 text-xs text-ink-faint">
-                  No location fix yet — install the TrackNaija agent on this laptop and grant it
-                  network access.
+                  No location fix yet — install the TrackNaija agent on this {isPhone ? "phone" : "laptop"}{" "}
+                  and grant it network access.
                 </p>
               )}
             </Card>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

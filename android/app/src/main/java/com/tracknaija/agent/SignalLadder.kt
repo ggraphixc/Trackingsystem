@@ -3,7 +3,17 @@ package com.tracknaija.agent
 import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
+import android.net.wifi.WifiManager
 import android.os.BatteryManager
+import android.telephony.CellIdentityGsm
+import android.telephony.CellIdentityLte
+import android.telephony.CellIdentityNr
+import android.telephony.CellIdentityWcdma
+import android.telephony.CellInfoGsm
+import android.telephony.CellInfoLte
+import android.telephony.CellInfoNr
+import android.telephony.CellInfoWcdma
+import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationServices
@@ -11,6 +21,7 @@ import com.google.android.gms.location.Priority
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
 import org.json.JSONObject
 import kotlin.coroutines.resume
 
@@ -35,6 +46,8 @@ class SignalLadder(private val context: Context) {
         val battery: Int,
         val timestamp: String,
         val confidence: Int,
+        val networks: JSONArray? = null, // nearby Wi-Fi BSSIDs — the fingerprint
+        val cells: JSONArray? = null, // nearby cell towers — another fingerprint
     ) {
         fun toJson(): JSONObject = JSONObject().apply {
             put("lat", lat)
@@ -42,10 +55,12 @@ class SignalLadder(private val context: Context) {
             put("accuracy", accuracy.toDouble())
             put("source", source)
             put("battery", battery)
-            put("timestamp", timestamp)
-            put("confidence", confidence)
-        }
+        put("timestamp", timestamp)
+        put("confidence", confidence)
+        put("networks", networks ?: JSONArray.NULL)
+        put("cells", cells ?: JSONArray.NULL)
     }
+}
 
     private val fused = LocationServices.getFusedLocationProviderClient(context)
 
@@ -70,6 +85,12 @@ class SignalLadder(private val context: Context) {
         val battery = batteryPercent()
         val now = java.time.Instant.now().toString()
 
+        // Wi-Fi + cell fingerprints ride along with EVERY fix (even last_known)
+        // so the dashboard can recognize where a device has been by its network
+        // surroundings, not just its coordinates.
+        val networks = if (hasFineLocation()) wifiNetworks() else null
+        val cells = if (hasFineLocation()) cellTowers() else null
+
         val fresh = if (hasFineLocation()) requestFusedFix() else null
         if (fresh != null) {
             val source = when {
@@ -90,6 +111,8 @@ class SignalLadder(private val context: Context) {
                 battery = battery,
                 timestamp = now,
                 confidence = confidence,
+                networks = networks,
+                cells = cells,
             )
         }
 
@@ -103,8 +126,73 @@ class SignalLadder(private val context: Context) {
                 battery = battery,
                 timestamp = now,
                 confidence = (last.optInt("confidence", 30) * 0.7).toInt().coerceIn(5, 40),
+                networks = networks,
+                cells = cells,
             )
         }
+
+        null
+    }
+
+    /**
+     * Nearby Wi-Fi access points (BSSID + SSID + signal). This is the strongest
+     * "where has this device been" fingerprint — even with no internet, the
+     * radio sees the same BSSIDs, and a stolen phone reconnecting to a cafe's
+     * Wi-Fi becomes recognizable. Bounded to 8 APs, best signal first.
+     */
+    private fun wifiNetworks(): JSONArray? = runCatching {
+        val wm = context.getSystemService(Context.WIFI_SERVICE) as WifiManager
+        val results = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            wm.scanResults
+        } else {
+            // Kick a fresh scan on older APIs; results land asynchronously, so
+            // also read whatever the radio last reported.
+            runCatching { wm.startScan() }
+            wm.scanResults
+        }
+        val arr = JSONArray()
+        results.sortedByDescending { it.level }.take(8).forEach { r ->
+            arr.put(JSONObject()
+                .put("bssid", r.BSSID)
+                .put("ssid", r.SSID)
+                .put("rssi", r.level))
+        }
+        if (arr.length() == 0) null else arr
+    }.getOrNull()
+
+    /**
+     * Nearby cell towers (MCC/MNC/LAC/CID). Works with mobile data off — the
+     * radio still sees towers — and adds a second independent fingerprint.
+     */
+    private fun cellTowers(): JSONArray? = runCatching {
+        val tm = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+        val arr = JSONArray()
+        tm.allCellInfo?.take(5)?.forEach { ci ->
+            val cell = when (ci) {
+                is CellInfoGsm -> ci.cellIdentity?.let {
+                    JSONObject().put("mcc", it.mcc).put("mnc", it.mnc)
+                        .put("lac", it.lac).put("cid", it.cid)
+                }
+                is CellInfoLte -> ci.cellIdentity?.let {
+                    JSONObject().put("mcc", it.mcc).put("mnc", it.mnc)
+                        .put("tac", it.tac).put("cid", it.ci)
+                }
+                is CellInfoWcdma -> ci.cellIdentity?.let {
+                    JSONObject().put("mcc", it.mcc).put("mnc", it.mnc)
+                        .put("lac", it.lac).put("cid", it.cid)
+                }
+                is CellInfoNr -> ci.cellIdentity?.let {
+                    JSONObject().put("mcc", it.mcc).put("mnc", it.mnc)
+                        .put("tac", it.tac).put("cid", it.nci)
+                }
+                else -> null
+            }
+            if (cell != null) arr.put(cell)
+        }
+        if (arr.length() == 0) null else arr
+    }.getOrNull()
+
+    private data class FreshFix(val lat: Double, val lng: Double, val accuracy: Float)
 
         null
     }

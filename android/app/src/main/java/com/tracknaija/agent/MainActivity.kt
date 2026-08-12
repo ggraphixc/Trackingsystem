@@ -52,6 +52,14 @@ class MainActivity : AppCompatActivity() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             needed += Manifest.permission.POST_NOTIFICATIONS
         }
+        // Community BLE beacon (Android 12+ split permissions)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            needed += listOf(
+                Manifest.permission.BLUETOOTH_SCAN,
+                Manifest.permission.BLUETOOTH_ADVERTISE,
+                Manifest.permission.BLUETOOTH_CONNECT,
+            )
+        }
         val missing = needed.filter {
             ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
         }

@@ -181,6 +181,85 @@ async function api(path, body) {
   console.log(`[18] invalid phone rejected: HTTP ${bad.status}`);
   if (bad.status !== 400) throw new Error("invalid phone not rejected");
 
+  // 19. The desktop agent reports Wi-Fi BSSIDs with each fix — the laptop
+  // fingerprint. The server must store them untouched.
+  const wifiFix = {
+    lat: 6.6018,
+    lng: 3.3515,
+    accuracy: 25,
+    source: "wifi",
+    networks: [
+      { bssid: "A0:36:9F:11:22:33", ssid: "Spectranet-NG", rssi: -52 },
+      { bssid: "F8:1A:67:44:55:66", ssid: "Starbucks-Wifi", rssi: -68 },
+    ],
+    timestamp: new Date().toISOString(),
+    confidence: 85,
+  };
+  await client.postFix(deviceId, wifiFix);
+  const wifiFixes = await api(`/api/devices/${deviceId}/fixes`);
+  const latestFix = wifiFixes[0];
+  console.log(
+    `[19] wifi fingerprint: networks=${Array.isArray(latestFix?.networks) ? latestFix.networks.length : "none"} firstBssid=${latestFix?.networks?.[0]?.bssid}`,
+  );
+  if (!Array.isArray(latestFix?.networks) || latestFix.networks[0]?.bssid !== "A0:36:9F:11:22:33") {
+    throw new Error("wifi fingerprint not stored");
+  }
+
+  // 20. Owner marks the device lost → community BLE beacon becomes active and
+  // sightings will now raise alerts. A `lost` command is queued so the phone
+  // agent arms its own beacon.
+  const lostRes = await api(`/api/devices/${deviceId}/lost`, { lost: true });
+  const lostCmds = await client.getCommands(deviceId, null);
+  console.log(
+    `[20] mark lost: ok=${lostRes.ok} lost=${lostRes.lost} queued=${lostCmds.map((c) => c.type).join(",")}`,
+  );
+  if (!lostRes.ok || lostRes.lost !== true) throw new Error("mark-lost failed");
+  if (!lostCmds.some((c) => c.type === "lost")) throw new Error("lost command not queued");
+  // Ack it so later steps see a clean queue.
+  const lostCmd = lostCmds.find((c) => c.type === "lost");
+  await client.ackCommand(deviceId, lostCmd.id);
+
+  // 21. ANOTHER TrackNaija phone (anonymous — no deviceId, just the beacon it
+  // heard over BLE) reports a sighting with the scanner's GPS position.
+  const { beaconFor } = require("./beacon");
+  const beacon = beaconFor(deviceId);
+  const sighting = await api("/api/sightings", {
+    beacon,
+    lat: 6.5244,
+    lng: 3.3792,
+    accuracy: 18,
+  });
+  const sightings = await api(`/api/devices/${deviceId}/sightings`);
+  console.log(
+    `[21] sighting: reportOk=${sighting.ok} stored=${sightings.length} beacon=${beacon} loc=${sightings[0]?.lat.toFixed(4)},${sightings[0]?.lng.toFixed(4)}`,
+  );
+  if (!sighting.ok || sightings.length !== 1) throw new Error("sighting not stored");
+
+  // 22. Because the device is lost, the sighting raised an in-app alert.
+  const alerts2 = await api("/api/alerts/latest");
+  const sightingAlert = alerts2.alerts.find((a) => a.type === "sighting" && a.deviceId === deviceId);
+  console.log(`[22] sighting alert raised: ${!!sightingAlert}`);
+  if (!sightingAlert) throw new Error("sighting alert not raised");
+
+  // 23. Unknown beacons are silently swallowed (201) — scanners can't probe
+  // which devices exist.
+  const ghost = await api("/api/sightings", {
+    beacon: "deadbeefcafe", // 12 hex chars, matches nobody
+    lat: 6.5,
+    lng: 3.4,
+  });
+  const ghosts = await api(`/api/devices/${deviceId}/sightings`);
+  console.log(`[23] ghost beacon: ok=${ghost.ok} deviceSightingsStill=${ghosts.length}`);
+  if (!ghost.ok || ghosts.length !== 1) throw new Error("ghost beacon leaked");
+
+  // 24. Device list exposes the new phone-first fields.
+  const devices2 = await api("/api/devices");
+  const row = devices2.find((d) => d.deviceId === deviceId);
+  console.log(
+    `[24] device row: type=${row.type} lost=${row.lost} sightings=${row.sightingCount} operator=${row.operator}`,
+  );
+  if (row.type !== "laptop" || !row.lost || row.sightingCount !== 1) throw new Error("device row fields wrong");
+
   console.log("== E2E PASSED ==");
 })().then(
   () => {

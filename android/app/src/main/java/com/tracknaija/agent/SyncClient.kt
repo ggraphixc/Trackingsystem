@@ -82,6 +82,14 @@ class SyncClient(private val serverUrl: String) {
             JSONObject().put("event", event),
         ) != null
 
+    /**
+     * Community relay: this phone heard another TrackNaija phone's BLE beacon
+     * and reports it with our GPS position. Anonymous — the server resolves
+     * the beacon to a device internally and never leaks whether it was known.
+     */
+    suspend fun postSighting(sighting: JSONObject): Boolean =
+        request("POST", "/api/sightings", sighting) != null
+
     /** Same as [request] but for endpoints that return a JSON *array* (GET /commands). */
     private suspend fun requestArray(method: String, path: String): JSONArray? =
         withContext(Dispatchers.IO) {

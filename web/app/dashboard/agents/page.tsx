@@ -11,17 +11,21 @@ import {
   saveSettings,
   sendCommand,
   sendTestSms,
+  setDeviceLost,
 } from "@/lib/api";
 import type { PairedDevice, ServerSettings } from "@/lib/api";
 import DeviceAlerts from "@/components/device-alerts";
 import {
   AlarmIcon,
   CrosshairIcon,
+  DeviceMobileIcon,
   EyeIcon,
   LockClosedIcon,
+  MapPinIcon,
   PhoneIcon,
   RefreshIcon,
   ServerIcon,
+  SignalIcon,
   WifiIcon,
 } from "@/components/icons";
 import { Card, SectionTitle } from "@/components/ui";
@@ -47,6 +51,7 @@ export default function AgentsPage() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState("");
   const [pendingCmd, setPendingCmd] = useState<string | null>(null);
+  const [pendingLost, setPendingLost] = useState<string | null>(null);
   const [settings, setSettings] = useState<ServerSettings | null>(null);
   const [smsPhone, setSmsPhone] = useState("");
   const [smsBusy, setSmsBusy] = useState(false);
@@ -106,7 +111,7 @@ export default function AgentsPage() {
 
   async function makeCode() {
     setBusy(true);
-    const result = await registerPair("laptop");
+    const result = await registerPair("device");
     setBusy(false);
     if (result) {
       setCode(result.code);
@@ -122,6 +127,24 @@ export default function AgentsPage() {
     setPendingCmd(null);
     setToast(ok ? `${label} command sent to ${deviceId.slice(0, 8)}` : "Command failed — server offline?");
     setTimeout(() => setToast(""), 4000);
+  }
+
+  async function toggleLost(device: PairedDevice) {
+    setPendingLost(device.deviceId);
+    const ok = await setDeviceLost(device.deviceId, !device.lost);
+    setPendingLost(null);
+    if (ok) {
+      setToast(
+        !device.lost
+          ? `${device.hostname ?? "Device"} marked lost — community beacon alerts are now active.`
+          : `${device.hostname ?? "Device"} marked found.`,
+      );
+      setTimeout(() => setToast(""), 5000);
+      load();
+    } else {
+      setToast("Could not update lost status — server offline?");
+      setTimeout(() => setToast(""), 4000);
+    }
   }
 
   return (
@@ -165,7 +188,7 @@ export default function AgentsPage() {
         </div>
         <div className="text-right">
           <p className="text-2xl font-bold text-ink">{devices.length}</p>
-          <p className="text-xs text-ink-muted">linked agents</p>
+          <p className="text-xs text-ink-muted">linked devices</p>
         </div>
       </Card>
 
@@ -230,10 +253,11 @@ export default function AgentsPage() {
       <Card className="mb-6 p-5">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="max-w-md">
-            <h3 className="text-sm font-semibold text-ink">Link a new agent</h3>
+            <h3 className="text-sm font-semibold text-ink">Link a new device</h3>
             <p className="mt-1 text-sm text-ink-muted">
               Generate a pairing code, then enter it in the agent{"'"}s <em>Link to dashboard</em>{" "}
-              card. The agent streams fixes and evidence here automatically.
+              card — on the Android app or the desktop agent. The device streams fixes and evidence
+              here automatically.
             </p>
           </div>
           <button className="btn-secondary" onClick={makeCode} disabled={busy}>
@@ -258,9 +282,9 @@ export default function AgentsPage() {
       {/* Paired devices */}
       {devices.length === 0 ? (
         <Card className="p-10 text-center text-sm text-ink-muted">
-          No agents linked yet. Install the TrackNaija agent on a laptop, start the sync server
-          (<span className="font-mono">cd server && npm start</span>), generate a code above, and
-          enter it in the agent.
+          No devices linked yet. Install the TrackNaija agent on your <strong>phone</strong> (Android
+          app — catches SIM swaps and works with data off) or <strong>laptop</strong> (desktop agent),
+          generate a code above, and enter it in the app.
         </Card>
       ) : (
         <div className="grid gap-4 lg:grid-cols-2">
@@ -272,32 +296,64 @@ export default function AgentsPage() {
             const offline = lastSeenMs > 6 * 3.6e6;
             const reconnectedRecently =
               d.reconnectedAt != null && Date.now() - new Date(d.reconnectedAt).getTime() < 3.6e6;
+            const isPhone = d.type === "phone";
+            const sightings = (d.sightings ?? []).slice(0, 3);
             return (
-              <Card key={d.deviceId} className="p-5">
+              <Card
+                key={d.deviceId}
+                className={`p-5 ${d.lost ? "ring-1 ring-inset ring-red-400/40" : ""}`}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
-                    <p className="font-semibold text-ink">{d.hostname ?? "Unknown host"}</p>
-                    <p className="mt-0.5 font-mono text-[11px] text-ink-faint">
-                      Serial {d.serialNumber ?? "—"} · {PLATFORM_LABEL[d.platform ?? ""] ?? d.platform ?? "—"}
-                      {d.imei ? ` · IMEI ${d.imei}` : ""}
+                    <div className="flex items-center gap-2">
+                      <span
+                        className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${
+                          isPhone ? "bg-primary/10 text-primary" : "bg-violet-50 text-violet-600"
+                        }`}
+                      >
+                        {isPhone ? (
+                          <DeviceMobileIcon className="h-5 w-5" />
+                        ) : (
+                          <SignalIcon className="h-5 w-5" />
+                        )}
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate font-semibold text-ink">{d.hostname ?? "Unknown device"}</p>
+                        <p className="mt-0.5 font-mono text-[11px] text-ink-faint">
+                          {isPhone ? "Phone" : "Laptop"} · {PLATFORM_LABEL[d.platform ?? ""] ?? d.platform ?? "—"}
+                        </p>
+                      </div>
+                    </div>
+                    <p className="mt-2 font-mono text-[11px] text-ink-faint">
+                      {isPhone ? "IMEI" : "Serial"} {isPhone ? d.imei ?? "—" : d.serialNumber ?? "—"}
+                      {isPhone && d.operator ? ` · ${d.operator}` : ""}
                     </p>
                     <p className="mt-0.5 font-mono text-[11px] text-ink-faint">
                       ID {d.deviceId.slice(0, 12)}
                     </p>
                   </div>
-                  {offline ? (
-                    <span className="chip bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20">
-                      offline · data off?
-                    </span>
-                  ) : reconnectedRecently ? (
-                    <span className="chip bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-600/20">
-                      reconnected
-                    </span>
-                  ) : (
-                    <span className="chip bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
-                      linked
-                    </span>
-                  )}
+                  <div className="flex shrink-0 flex-col items-end gap-1.5">
+                    {d.lost ? (
+                      <span className="chip bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20">
+                        lost · beacon active
+                      </span>
+                    ) : offline ? (
+                      <span className="chip bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20">
+                        offline · data off?
+                      </span>
+                    ) : reconnectedRecently ? (
+                      <span className="chip bg-sky-50 text-sky-700 ring-1 ring-inset ring-sky-600/20">
+                        reconnected
+                      </span>
+                    ) : (
+                      <span className="chip bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+                        linked
+                      </span>
+                    )}
+                    {isPhone && fix?.battery != null ? (
+                      <span className="chip bg-slate-100 text-slate-600">🔋 {fix.battery}%</span>
+                    ) : null}
+                  </div>
                 </div>
 
                 {offline ? (
@@ -306,8 +362,8 @@ export default function AgentsPage() {
                       No signal for {offlineH < 24 ? `${Math.round(offlineH)} hours` : `${Math.round(offlineH / 24)} days`}.
                     </p>
                     <p className="mt-1 text-amber-700">
-                      Data off doesn't stop the carrier or Find My Device. Generate the police report,
-                      carrier cell-location request and IMEI blacklist letters.
+                      Data off doesn't stop the community beacon — a nearby TrackNaija phone can still
+                      hear it. And the carrier + police can still trace the IMEI.
                     </p>
                     <Link href="/dashboard/offline-recovery" className="mt-2 inline-flex items-center gap-1.5 font-semibold text-primary">
                       <WifiIcon className="h-3.5 w-3.5" />
@@ -332,12 +388,44 @@ export default function AgentsPage() {
                       {fix.timestamp ? new Date(fix.timestamp).toLocaleString("en-NG") : "—"}
                       {d.lastSeenAt ? ` · last seen ${new Date(d.lastSeenAt).toLocaleTimeString()}` : ""}
                     </p>
+                    {Array.isArray(fix.networks) && fix.networks.length > 0 ? (
+                      <p className="mt-1.5 truncate text-[11px] text-ink-faint">
+                        Wi-Fi fingerprint:{" "}
+                        {fix.networks
+                          .slice(0, 3)
+                          .map((n) => n.ssid ?? n.bssid)
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </p>
+                    ) : null}
                   </div>
                 ) : (
                   <p className="mt-4 text-xs text-ink-faint">Waiting for the first location fix…</p>
                 )}
 
-                <div className="mt-4 grid grid-cols-3 gap-2 border-t border-slate-100 pt-4">
+                {/* Community sightings — a TrackNaija phone heard its beacon */}
+                {sightings.length > 0 ? (
+                  <div className="mt-4 rounded-xl border border-violet-100 bg-violet-50/60 p-3.5">
+                    <p className="flex items-center gap-1.5 text-xs font-medium text-violet-700">
+                      <MapPinIcon className="h-3.5 w-3.5" />
+                      Seen by the community ({d.sightingCount} total)
+                    </p>
+                    <ul className="mt-1.5 space-y-1">
+                      {sightings.map((s, i) => (
+                        <li key={`${s.receivedAt}-${i}`} className="flex items-center justify-between gap-2 text-[11px] text-violet-800">
+                          <span className="truncate font-mono">
+                            {s.lat.toFixed(4)}°, {s.lng.toFixed(4)}°
+                          </span>
+                          <span className="shrink-0 text-violet-500">
+                            {new Date(s.at).toLocaleString("en-NG")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                <div className="mt-4 grid grid-cols-4 gap-2 border-t border-slate-100 pt-4">
                   <button
                     className="btn-ghost !px-2 text-xs"
                     disabled={pendingCmd === d.deviceId}
@@ -358,6 +446,14 @@ export default function AgentsPage() {
                     onClick={() => command(d.deviceId, "lock", "Lock")}
                   >
                     <LockClosedIcon className="h-4 w-4 text-primary" /> Lock
+                  </button>
+                  <button
+                    className={`btn-ghost !px-2 text-xs ${d.lost ? "!border-red-300 !bg-red-50 !text-red-700" : ""}`}
+                    disabled={pendingLost === d.deviceId}
+                    onClick={() => toggleLost(d)}
+                  >
+                    <CrosshairIcon className={`h-4 w-4 ${d.lost ? "text-red-600" : "text-ink-faint"}`} />
+                    {d.lost ? "Found" : "Lost"}
                   </button>
                 </div>
                 <p className="mt-2 text-[11px] text-ink-faint">
