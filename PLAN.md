@@ -3,6 +3,8 @@
 > **Product name:** Dravex
 >
 > **Status:** Phase 1–2 scaffold · **Verdict:** ✅ Feasible — agents in `desktop/` (laptops), `android/` (phones), `ios/` (companion), command center in `web/` (Next.js dashboard)
+>
+> ⚠️ **Canonical spec:** **[DRAVEX_NEXTGENE.md](DRAVEX_NEXTGENE.md)** is the single source of truth for architecture, anti-theft flows, API, schema and roadmap. This file is the historical plan — where it disagrees with the master spec, the master spec wins.
 
 ---
 

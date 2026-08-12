@@ -1,7 +1,8 @@
 # 💻 Dravex — Lost Laptop & Phone Tracking & Recovery (Nigeria)
 
-A loss-prevention, recovery, and sustainability platform for **laptops and desktops** in Nigeria.
-See **[PLAN.md](PLAN.md)** for the full product & technical plan.
+A loss-prevention, recovery, and sustainability platform for **laptops, desktops and phones** in Nigeria.
+See **[DRAVEX_NEXTGENE.md](DRAVEX_NEXTGENE.md)** — the master specification (architecture, anti-theft flows, API, schema, roadmap).
+Historical planning lives in **[PLAN.md](PLAN.md)**.
 
 > **Status:** Phase 1 MVP scaffold.
 > `desktop/` = the agent app **installed on laptops** (Windows/macOS/Linux).

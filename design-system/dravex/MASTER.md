@@ -3,6 +3,8 @@
 > **LOGIC:** When building a specific page, first check `design-system/pages/[page-name].md`.
 > If that file exists, its rules **override** this Master file.
 > If not, strictly follow the rules below.
+>
+> **Category:** Device Security & Recovery Platform (Dravex) — see **[DRAVEX_NEXTGENE.md](../../DRAVEX_NEXTGENE.md)** for product/architecture context.
 
 ---
 
