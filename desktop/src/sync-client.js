@@ -152,6 +152,53 @@ class SyncClient {
     return this._req("GET", `/api/devices/${deviceId}/fixes?limit=${limit}`);
   }
 
+  /**
+   * Resolve a Wi-Fi fingerprint (BSSIDs) to a coordinate via the server's
+   * POST /api/geolocate. Returns { lat, lng, accuracy, source, cached } or
+   * null when the server can't resolve (501 unconfigured / 502 no provider /
+   * unreachable) — the engine then falls back to IP honestly.
+   */
+  async geolocate(bssids) {
+    return this._req(
+      "POST",
+      "/api/geolocate",
+      { bssids: Array.isArray(bssids) ? bssids : [] },
+      { auth: "device" },
+    );
+  }
+
+  /**
+   * Ownership handover (second-life market): returns a fresh single-use
+   * pairing code for the new owner's agent; the old credential is rotated.
+   */
+  async transferDevice(deviceId) {
+    return this._req("POST", `/api/devices/${deviceId}/transfer`, {});
+  }
+
+  /** Owner confirms the device is back ("Verified → Recovered"). */
+  async verifyDevice(deviceId) {
+    return this._req("POST", `/api/devices/${deviceId}/verify`, {});
+  }
+
+  /** Owner sets the one-way message shown to a finder. */
+  async setRecoveryMessage(deviceId, message, contactPreference) {
+    return this._req(
+      "PUT",
+      `/api/devices/${deviceId}/recovery-message`,
+      { message, contactPreference },
+    );
+  }
+
+  /** A finder sends the owner one message through the device's recovery page. */
+  async postContactMessage(deviceId, message) {
+    return this._req(
+      "POST",
+      `/api/devices/${deviceId}/contact`,
+      { message },
+      { auth: "none" },
+    );
+  }
+
   /** All paired devices (phones + laptops) for the owner dashboard. */
   async listDevices() {
     return this._req("GET", "/api/devices");

@@ -106,6 +106,54 @@ async function api(path, body, bearer) {
   if (r.status !== 201) throw new Error(`sighting not public (${r.status})`);
   console.log(`[11] sighting public: ${r.status}`);
 
+  // 12. Ownership transfer ROTATES the credential: the old owner's token
+  // stops working immediately (a seller can't keep polling a sold device).
+  r = await api(`/api/devices/${claim.deviceId}/transfer`, {}, KEY);
+  if (r.status !== 200 || !r.json.code) throw new Error("transfer with key failed");
+  const oldTokenDead = await client.postFix(claim.deviceId, {
+    lat: 9.0, lng: 7.0, accuracy: 40, source: "ip",
+    timestamp: new Date().toISOString(), confidence: 55,
+  });
+  if (oldTokenDead !== null) throw new Error("old token still works after transfer");
+  console.log(`[12] transfer rotates credential: ok (new code ${r.json.code})`);
+
+  // 13. The NEW owner's agent claims the transferred device with the fresh
+  // code and immediately has a working token.
+  const newOwner = new SyncClient(BASE);
+  const claim2 = await newOwner.claim(r.json.code, {
+    hostname: "NEW-OWNER", serialNumber: "AUTH-SN-001", platform: "win32",
+  });
+  if (!claim2 || claim2.deviceId !== claim.deviceId || !claim2.token) {
+    throw new Error("new owner could not claim transferred device");
+  }
+  newOwner.setDeviceToken(claim2.token);
+  if (!(await newOwner.postFix(claim.deviceId, {
+    lat: 6.5, lng: 3.4, accuracy: 40, source: "ip",
+    timestamp: new Date().toISOString(), confidence: 55,
+  }))) throw new Error("new owner token rejected");
+  console.log("[13] new owner claims + uploads with fresh token: ok");
+
+  // 14. Nearest + geolocate are gated: no credential → 401; with the owner
+  // key they work (geolocate honestly answers 501 without GEOLOCATION_API_KEY).
+  r = await api("/api/nearest?lat=6.5&lng=3.4");
+  if (r.status !== 401) throw new Error(`nearest not owner-gated (${r.status})`);
+  r = await api("/api/nearest?lat=6.5&lng=3.4", null, KEY);
+  if (r.status !== 200) throw new Error(`nearest failed with key (${r.status})`);
+  r = await api("/api/geolocate", { bssids: ["A0:36:9F:11:22:33"] });
+  if (r.status !== 401) throw new Error(`geolocate not gated (${r.status})`);
+  r = await api("/api/geolocate", { bssids: ["A0:36:9F:11:22:33"] }, KEY);
+  if (r.status !== 501) throw new Error(`geolocate with key expected 501 (${r.status})`);
+  console.log("[14] nearest + geolocate gated: 401 w/o key, 200/501 with key");
+
+  // 15. A device token also unlocks geolocate (agents call it with device auth).
+  const geoByDevice = await new SyncClient(BASE).setDeviceToken(claim2.token)._req(
+    "POST", "/api/geolocate", { bssids: ["F8:1A:67:44:55:66"] }, { auth: "device" },
+  );
+  if (geoByDevice !== null && geoByDevice.source !== "unresolved") {
+    throw new Error("geolocate via device token unexpected");
+  }
+  console.log("[15] geolocate via device token: allowed (501 honest)");
+
   console.log("== AUTH E2E PASSED ==");
 })().then(
   () => {},

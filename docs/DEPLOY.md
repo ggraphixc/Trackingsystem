@@ -129,3 +129,24 @@ Settings, for the owner-only views).
 > Devices paired *before* auth was enabled have no stored token and will get
 > 401 on uploads. Fix: `POST /api/devices/:id/token` (owner key) returns a
 > fresh token — enter it in the agent, or simply re-pair the device.
+
+## Phase 2 (Fidelity + Second-Life) environment
+
+| Env var | Purpose | Required |
+|---|---|---|
+| `GEOLOCATION_API_KEY` | Wi-Fi geolocation (Google Geolocation API key; the server falls back to Mozilla Location). **Without it, `POST /api/geolocate` answers 501 `{ source: "unresolved" }`** and the desktop honestly uses IP / last-known — it never fakes a coordinate | to resolve Wi-Fi fixes |
+| `CORS_ORIGIN` | Production web origin, e.g. `https://tracknaija.onrender.com`. When set, cross-origin calls from any other origin are blocked (default `*` is dev-only) | when the dashboard is served from a different domain |
+| `ALERT_WEBHOOK_URL` | Comma-separated HTTPS URLs that receive every alert as JSON `{ alert }`. Point it at a webhook-to-email service (e.g. ntfy, Zapier, Pipedream) for an email fallback the moment push/SMS can't reach the owner | optional |
+| `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_PHONE_NUMBER` | Twilio SMS provider (replaces log mode) | optional — either Twilio or Termii |
+| `TERMII_API_KEY` + `TERMII_FROM` | Termii SMS provider — Nigeria-native, DND-friendly | optional — either Termii or Twilio |
+
+SMS stays in **log mode** (messages print to the server console) until a
+provider is configured — the E2E suite runs against log mode, and switching
+to a live provider requires zero code changes.
+
+**PostGIS note:** the Neon store auto-creates a `dravex_points` table with a
+GiST index when PostGIS is available and answers `/api/nearest` with real
+`ST_Distance` queries. On hosts without PostGIS the table degrades to
+plain coordinate columns and the server falls back to haversine — same API,
+no config needed. Enable PostGIS on Neon per-project (it ships with the
+service).

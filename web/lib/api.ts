@@ -66,6 +66,14 @@ export interface PairedDevice {
   operator?: string | null;
   sightingCount?: number;
   sightings?: CommunitySighting[];
+  /** owner confirmed the device is back ("Verified → Recovered") */
+  verifiedAt?: string | null;
+  /** ownership handed over for resale (second-life market) */
+  transferredAt?: string | null;
+  /** owner-set one-way message shown to a finder */
+  recoveryMessage?: { message: string; contactPreference?: string | null; at: string } | null;
+  /** anonymous messages a finder sent through the device's recovery page */
+  contactMessages?: { id: string; message: string; at: string }[];
 }
 
 export interface EvidenceItem {
@@ -153,6 +161,39 @@ export async function listDevices(): Promise<PairedDevice[]> {
 
 export async function getSightings(deviceId: string): Promise<CommunitySighting[]> {
   return (await req<CommunitySighting[]>(`/api/devices/${deviceId}/sightings`)) ?? [];
+}
+
+/**
+ * Ownership handover (second-life market): the old credential is rotated and
+ * a fresh single-use pairing code is returned for the new owner's agent.
+ */
+export async function transferDevice(
+  deviceId: string,
+): Promise<{ ok: boolean; code?: string; deviceId?: string } | null> {
+  return req<{ ok: boolean; code?: string; deviceId?: string }>(
+    `/api/devices/${deviceId}/transfer`,
+    {},
+  );
+}
+
+/** Owner confirms the device is back — "Verified → Recovered" lifecycle step. */
+export async function verifyDevice(
+  deviceId: string,
+): Promise<{ ok: boolean; verifiedAt?: string } | null> {
+  return req<{ ok: boolean; verifiedAt?: string }>(`/api/devices/${deviceId}/verify`, {});
+}
+
+/** Owner sets the one-way message shown to a finder of this device. */
+export async function setRecoveryMessage(
+  deviceId: string,
+  message: string,
+  contactPreference?: string,
+): Promise<boolean> {
+  const res = await req<{ ok: boolean }>(`/api/devices/${deviceId}/recovery-message`, {
+    message,
+    contactPreference: contactPreference || undefined,
+  });
+  return !!res?.ok;
 }
 
 export async function setDeviceLost(

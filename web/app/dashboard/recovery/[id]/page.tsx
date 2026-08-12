@@ -3,7 +3,15 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
-import { getDevice, getFixes, getSightings, setDeviceLost } from "@/lib/api";
+import {
+  getDevice,
+  getFixes,
+  getSightings,
+  setDeviceLost,
+  setRecoveryMessage,
+  transferDevice,
+  verifyDevice,
+} from "@/lib/api";
 import type { PairedDevice, LocationFix, CommunitySighting } from "@/lib/api";
 import {
   AlertTriangleIcon,
@@ -113,6 +121,66 @@ export default function RecoveryDetailPage() {
       window.location.reload();
     } else {
       setErr("Could not reach the server — is it online?");
+    }
+  }
+
+  /** Lifecycle step "Verified → Recovered": owner confirms the device is back. */
+  async function verifyRecovered() {
+    if (
+      !window.confirm(
+        "Confirm this device is back in your possession? It is marked verified-recovered, the beacon disarms and the registry listing resolves.",
+      )
+    )
+      return;
+    setBusy(true);
+    const res = await verifyDevice(id);
+    setBusy(false);
+    if (res?.ok) {
+      window.location.reload();
+    } else {
+      setErr("Could not reach the server — is it online?");
+    }
+  }
+
+  /** Ownership handover for resale: rotate the credential, show the new code. */
+  async function transferOwnership() {
+    if (
+      !window.confirm(
+        "Transfer this device to a new owner? Its registry listing is cleared, the old agent is disconnected, and a fresh pairing code is issued for the new owner's agent.",
+      )
+    )
+      return;
+    setBusy(true);
+    const res = await transferDevice(id);
+    setBusy(false);
+    if (res?.ok) {
+      const code = res.code ?? "";
+      window.alert(
+        `Device transferred. Give this pairing code to the new owner (it expires on first use):\n\n${code}\n\nThey enter it in the Dravex agent to link the device.`,
+      );
+      window.location.reload();
+    } else {
+      setErr("Could not reach the server — is it online?");
+    }
+  }
+
+  const [msgDraft, setMsgDraft] = useState("");
+  const [msgPref, setMsgPref] = useState("");
+  const [msgBusy, setMsgBusy] = useState(false);
+
+  async function saveMessage() {
+    if (msgDraft.trim().length < 10) {
+      setErr("Write a short message first (at least 10 characters).");
+      return;
+    }
+    setMsgBusy(true);
+    const ok = await setRecoveryMessage(id, msgDraft.trim(), msgPref.trim() || undefined);
+    setMsgBusy(false);
+    if (ok) {
+      setErr("");
+      load();
+    } else {
+      setErr("Could not save the message — is the server online?");
     }
   }
 
@@ -283,9 +351,25 @@ export default function RecoveryDetailPage() {
               </p>
             </div>
           </div>
-          <button className="btn-secondary !border-white/30 !bg-white/10 !text-white hover:!bg-white/20" onClick={markFound} disabled={busy}>
-            {busy ? "Updating…" : "Mark found"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button className="btn-secondary !border-white/30 !bg-white/10 !text-white hover:!bg-white/20" onClick={markFound} disabled={busy}>
+              {busy ? "Updating…" : "Mark found"}
+            </button>
+            <button
+              className="btn-secondary !border-white/30 !bg-white/10 !text-white hover:!bg-white/20"
+              onClick={verifyRecovered}
+              disabled={busy}
+            >
+              Verify &amp; recover
+            </button>
+            <button
+              className="btn-ghost !border-white/30 !bg-transparent !text-red-100 hover:!bg-white/10"
+              onClick={transferOwnership}
+              disabled={busy}
+            >
+              Transfer ownership
+            </button>
+          </div>
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2 text-xs text-red-50/90">
           <span className="inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-1">
@@ -484,6 +568,69 @@ export default function RecoveryDetailPage() {
                 <RefreshIcon className="h-3.5 w-3.5" /> Refresh
               </button>
             </div>
+          </Card>
+
+          {/* Recovery message + finder inbox (M4) */}
+          <Card className="p-5">
+            <h3 className="mb-1 text-sm font-semibold text-ink">Message to whoever finds it</h3>
+            <p className="mb-3 text-xs text-ink-muted">
+              Set one short message shown on this recovery view — a good samaritan who finds the
+              device can reply without ever seeing your identity.
+            </p>
+            <textarea
+              className="w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              rows={3}
+              maxLength={280}
+              placeholder="e.g. This is my phone — reward offered. Please message me through Dravex."
+              value={msgDraft}
+              onChange={(e) => setMsgDraft(e.target.value)}
+            />
+            <input
+              className="mt-2 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
+              maxLength={120}
+              placeholder="Contact preference (optional) — e.g. police station drop-off, reward"
+              value={msgPref}
+              onChange={(e) => setMsgPref(e.target.value)}
+            />
+            <button
+              className="btn-primary mt-3 w-full !py-2 text-xs"
+              onClick={saveMessage}
+              disabled={msgBusy}
+            >
+              {msgBusy ? "Saving…" : "Save message"}
+            </button>
+            {device.recoveryMessage ? (
+              <div className="mt-3 rounded-xl bg-emerald-50 p-3 text-xs text-emerald-800">
+                <p className="font-semibold">Live message</p>
+                <p className="mt-1">“{device.recoveryMessage.message}”</p>
+                {device.recoveryMessage.contactPreference ? (
+                  <p className="mt-1 text-emerald-700">{device.recoveryMessage.contactPreference}</p>
+                ) : null}
+              </div>
+            ) : null}
+
+            {(device.contactMessages ?? []).length > 0 ? (
+              <div className="mt-4">
+                <p className="mb-2 text-xs font-semibold text-ink">
+                  Finder messages — {device.contactMessages!.length}
+                </p>
+                <ul className="space-y-2">
+                  {device.contactMessages!.map((m) => (
+                    <li key={m.id} className="rounded-xl bg-slate-50 p-3 text-xs">
+                      <p className="text-ink">{m.message}</p>
+                      <p className="mt-1 font-mono text-[10px] text-ink-faint">
+                        {new Date(m.at).toLocaleString("en-NG", {
+                          day: "numeric",
+                          month: "short",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        })}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </Card>
         </div>
       </div>

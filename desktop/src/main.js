@@ -4,9 +4,25 @@ const fs = require("fs");
 const { TrackingEngine } = require("./tracking-engine");
 const { SyncClient } = require("./sync-client");
 const { OfflineVault } = require("./offline-vault");
-const { scanNearby } = require("./ble-scan");
+const { scanNearby, setHelperCacheDir } = require("./ble-scan");
 const { getDeviceInfo, lockScreen, playAlarm } = require("./commands");
 const { createWindow, createTray, updateTray, openAgent, getWindow } = require("./ui");
+const { setKeyDir, isBoxed, protectSync, unprotectSync } = require("./secret-store");
+
+// Unboxed credentials, cached in memory after first decrypt. The state JSON
+// on disk only ever holds boxed strings (DPAPI / Keychain / XOR fallback).
+const secretCache = new Map();
+function boxedOrUnbox(value) {
+  if (!isBoxed(value)) return value; // plaintext in memory (fresh from claim)
+  if (secretCache.has(value)) return secretCache.get(value);
+  const plain = unprotectSync(value);
+  if (plain !== null) secretCache.set(value, plain);
+  return plain; // null = unreadable → treated as absent
+}
+function boxForStorage(plain) {
+  if (!plain || isBoxed(plain)) return plain;
+  return protectSync(plain);
+}
 
 let lostMode = false;
 let stateFile = "";
@@ -34,7 +50,14 @@ const defaultState = {
 function loadState() {
   try {
     if (fs.existsSync(stateFile)) {
-      return { ...defaultState, ...JSON.parse(fs.readFileSync(stateFile, "utf8")) };
+      const parsed = JSON.parse(fs.readFileSync(stateFile, "utf8"));
+      return {
+        ...defaultState,
+        ...parsed,
+        // Secrets are boxed on disk — decrypt once, cache in memory.
+        deviceToken: boxedOrUnbox(parsed.deviceToken),
+        ownerKey: boxedOrUnbox(parsed.ownerKey),
+      };
     }
   } catch (err) {
     console.error("Failed to read state:", err.message);
@@ -49,8 +72,14 @@ function sendToWindow(channel, payload) {
 
 function saveState(patch) {
   const next = { ...loadState(), ...patch };
+  // Never write a plaintext credential to disk — box it first (DPAPI /
+  // Keychain / XOR fallback). The persisted copy is boxed; the renderer and
+  // callers keep the plaintext in-memory view.
+  const persisted = { ...next };
+  if (persisted.deviceToken !== undefined) persisted.deviceToken = boxForStorage(persisted.deviceToken);
+  if (persisted.ownerKey !== undefined) persisted.ownerKey = boxForStorage(persisted.ownerKey);
   try {
-    fs.writeFileSync(stateFile, JSON.stringify(next, null, 2));
+    fs.writeFileSync(stateFile, JSON.stringify(persisted, null, 2));
   } catch (err) {
     console.error("Failed to save state:", err.message);
   }
@@ -92,7 +121,12 @@ async function flushVault() {
 
 /** Periodic tracking: keep the last fix fresh while the agent runs. */
 function startTrackingLoop() {
-  engine = new TrackingEngine(stateFile);
+  // The engine resolves Wi-Fi fingerprints against the sync server's
+  // POST /api/geolocate (Google/Mozilla, cached). No server = honest IP or
+  // last-known fallback — never a fabricated coordinate.
+  engine = new TrackingEngine(stateFile, (bssids) =>
+    sync && sync.configured ? sync.geolocate(bssids) : Promise.resolve(null),
+  );
   engine.on("fix", (fix) => {
     const state = saveState({ lastFix: fix });
     sendToWindow("agent:fix", fix);
@@ -310,6 +344,20 @@ ipcMain.handle("agent:set-device-lost", async (_e, deviceId, lost) => {
   return { ok: !!res, recoveryCode: res ? res.recoveryCode : null };
 });
 
+/** Ownership handover: rotate credential, clear registry, issue new code. */
+ipcMain.handle("agent:transfer-device", async (_e, deviceId) => {
+  if (!sync || !sync.configured) return { ok: false };
+  const res = await sync.transferDevice(deviceId);
+  return { ok: !!res, code: res ? res.code : null };
+});
+
+/** Owner confirms the device is back ("Verified → Recovered" lifecycle). */
+ipcMain.handle("agent:verify-device", async (_e, deviceId) => {
+  if (!sync || !sync.configured) return { ok: false };
+  const res = await sync.verifyDevice(deviceId);
+  return { ok: !!res };
+});
+
 /** Community sightings for one device (newest first). */
 ipcMain.handle("agent:get-sightings", async (_e, deviceId) => {
   if (!sync || !sync.configured) return { ok: false, sightings: [] };
@@ -495,6 +543,8 @@ if (!gotLock) {
     }
     stateFile = path.join(userDataDir, "agent-state.json");
     vaultFile = path.join(userDataDir, "offline-vault.json");
+    setKeyDir(userDataDir); // secret-store: DPAPI/Keychain/XOR key file lives here
+    setHelperCacheDir(userDataDir); // ble-scan: compiled macOS helper cache
     vault = new OfflineVault(vaultFile);
 
     const state = loadState();

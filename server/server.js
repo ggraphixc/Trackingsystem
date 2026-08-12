@@ -193,7 +193,7 @@ function storeEvent(dev, event) {
  */
 function raiseAlert(type, dev, body, opts = {}) {
   store.alerts = store.alerts || [];
-  store.alerts.push({
+  const alert = {
     id: randomUUID(),
     type,
     deviceId: dev.deviceId,
@@ -201,14 +201,30 @@ function raiseAlert(type, dev, body, opts = {}) {
     body,
     at: new Date().toISOString(),
     read: false,
-  });
+  };
+  store.alerts.push(alert);
   if (store.alerts.length > 50) store.alerts = store.alerts.slice(-50);
   saveStore();
-  // Fire-and-forget: never block the request on push or SMS delivery.
+  // Fire-and-forget: never block the request on push, SMS or webhook delivery.
   notifyAll(store, saveStore).catch(() => {});
   // opts.sms === false (community sightings) keeps SMS budget for the truly
   // urgent signals — every sighting could otherwise drain the owner's quota.
-  if (opts.sms !== false) smsNotify(store, store.alerts[store.alerts.length - 1]);
+  if (opts.sms !== false) smsNotify(store, alert);
+  // Webhook/email sink (M6): ALERT_WEBHOOK_URL (comma-separated URLs allowed)
+  // receives every alert as JSON — point it at a webhook-to-email service or
+  // any alerting endpoint. Failure never blocks the sync request.
+  const hooks = (process.env.ALERT_WEBHOOK_URL || "")
+    .split(",")
+    .map((u) => u.trim())
+    .filter((u) => /^https?:\/\//.test(u));
+  for (const hook of hooks) {
+    fetch(hook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ alert }),
+      signal: AbortSignal.timeout(5000),
+    }).catch(() => {});
+  }
 }
 
 /**
@@ -267,12 +283,19 @@ function smsNotify(store, alert) {
     .catch(() => {});
 }
 
-function cors(res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  // Authorization must be allowed: the web dashboard sends `Bearer <owner
-  // key>` cross-origin, which otherwise fails the CORS preflight.
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+function cors(req, res) {
+  // Allowlist-first: when CORS_ORIGIN is set (production), only that origin
+  // may call the API cross-origin; otherwise fall back to `*` for the
+  // zero-config Phase-1 development mode. Never echo an untrusted origin.
+  const allowed = process.env.CORS_ORIGIN || "*";
+  const origin = req.headers.origin;
+  if (allowed === "*" || !origin || origin === allowed) {
+    res.setHeader("Access-Control-Allow-Origin", allowed === "*" ? "*" : allowed);
+    res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS,PUT");
+    // Authorization must be allowed: the web dashboard sends `Bearer <owner
+    // key>` cross-origin, which otherwise fails the CORS preflight.
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  }
 }
 
 function json(res, status, body) {
@@ -309,6 +332,19 @@ function deviceOk(req, dev) {
 }
 function ownerOrDeviceOk(req, dev) {
   return ownerOk(req) || deviceOk(req, dev);
+}
+
+/**
+ * Auth for endpoints that aren't scoped to one device but ARE called by
+ * agents (e.g. /api/geolocate): the owner key, or ANY valid device token.
+ * In open mode (no OWNER_KEY) this is always true.
+ */
+function anyDeviceOk(req) {
+  if (!OWNER_KEY) return true;
+  if (ownerOk(req)) return true;
+  const bearer = req.headers.authorization || "";
+  const token = bearer.startsWith("Bearer ") ? bearer.slice(7).trim() : "";
+  return !!token && Object.values(store.devices).some((d) => d.token === token);
 }
 
 function readBody(req) {
@@ -432,33 +468,46 @@ function registryVerdict(entry) {
 }
 
 /*
- * Public-check rate limit (30/min per IP, in-memory): /api/check is a
- * deliberately open oracle, so a simple limiter stops registry enumeration
- * (repeated queries differing by reported-vs-clean). Not a security boundary
- * — it's friction, and Phase-2 auth will replace it.
+ * In-memory per-IP rate limiters (sliding 60 s window). Each public or
+ * semi-public surface gets its own so one channel can't be hammered without
+ * affecting the others:
+ *   check    30/min — /api/check (stolen-registry enumeration friction)
+ *   claim    10/min — /api/pair/claim (pairing-code brute force)
+ *   sighting 30/min — POST /api/sightings (fake-sighting floods)
+ *   contact   5/min — POST /api/devices/:id/contact (finder-message spam)
+ * Not a security boundary — friction + honesty, cheap to run.
  */
-const checkHits = new Map();
-function checkRateLimited(ip) {
-  const now = Date.now();
-  if (checkHits.size > 500) {
-    for (const [k, v] of checkHits) {
-      if (!v.some((t) => now - t < 60_000)) checkHits.delete(k);
-    }
-  }
-  const recent = (checkHits.get(ip) || []).filter((t) => now - t < 60_000);
-  if (recent.length >= 30) {
-    checkHits.set(ip, recent);
-    return true;
-  }
-  recent.push(now);
-  checkHits.set(ip, recent);
-  return false;
+function makeLimiter(perMin) {
+  const hits = new Map();
+  return {
+    limited(ip) {
+      const now = Date.now();
+      if (hits.size > 1000) {
+        for (const [k, v] of hits) {
+          if (!v.some((t) => now - t < 60_000)) hits.delete(k);
+        }
+      }
+      const recent = (hits.get(ip) || []).filter((t) => now - t < 60_000);
+      if (recent.length >= perMin) {
+        hits.set(ip, recent);
+        return true;
+      }
+      recent.push(now);
+      hits.set(ip, recent);
+      return false;
+    },
+  };
 }
+const checkLimiter = makeLimiter(30);
+const claimLimiter = makeLimiter(10);
+const sightingLimiter = makeLimiter(30);
+const contactLimiter = makeLimiter(5);
+const geoLimiter = makeLimiter(20); // /api/geolocate hits a PAID provider
 
 /* ---------------- routes ---------------- */
 
 async function route(req, res) {
-  cors(res);
+  cors(req, res);
   if (req.method === "OPTIONS") return res.writeHead(204).end();
 
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -478,7 +527,7 @@ async function route(req, res) {
   // Buyer protection: query the stolen registry before buying a used phone or
   // laptop. Returns a verdict ONLY — never owner, deviceId or location data.
   if (!isPost && url.pathname === "/api/check") {
-    if (checkRateLimited(req.socket.remoteAddress || "unknown")) {
+    if (checkLimiter.limited(req.socket.remoteAddress || "unknown")) {
       return json(res, 429, { error: "Too many checks — try again in a minute." });
     }
     const q = url.searchParams.get("q") || url.searchParams.get("imei") || url.searchParams.get("serial") || "";
@@ -604,6 +653,9 @@ async function route(req, res) {
   // here with the SCANNER's GPS position. Anonymous (the scanner may be any
   // user's phone) — always answer 201 so nobody can probe which beacons exist.
   if (isPost && url.pathname === "/api/sightings") {
+    if (sightingLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many sightings — slow down." });
+    }
     const body = await readBody(req);
     const beacon = String(body.beacon || "").trim().toLowerCase();
     const lat = Number(body.lat);
@@ -611,16 +663,152 @@ async function route(req, res) {
     if (beacon && Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
       const dev = resolveBeacon(store, beacon);
       if (dev) {
-        storeSighting(dev, {
-          beacon,
-          lat,
-          lng,
-          accuracy: Number.isFinite(Number(body.accuracy)) ? Number(body.accuracy) : null,
-          at: typeof body.at === "string" ? body.at : new Date().toISOString(),
-        });
+        // Dedupe: the same scanner position for the same beacon within 5 min is
+        // one sighting — a phone scanning on a duty cycle must not flood the
+        // recovery view with identical reports.
+        const sig = `${beacon}|${lat.toFixed(3)}|${lng.toFixed(3)}`;
+        const nowMs = Date.now();
+        if (!dev.lastSightingSignatures) dev.lastSightingSignatures = [];
+        const fresh = dev.lastSightingSignatures.filter((s) => nowMs - s.at < 5 * 60_000);
+        if (!fresh.some((s) => s.key === sig)) {
+          fresh.push({ key: sig, at: nowMs });
+          if (fresh.length > 10) fresh = fresh.slice(-10);
+          dev.lastSightingSignatures = fresh;
+          storeSighting(dev, {
+            beacon,
+            lat,
+            lng,
+            accuracy: Number.isFinite(Number(body.accuracy)) ? Number(body.accuracy) : null,
+            at: typeof body.at === "string" ? body.at : new Date().toISOString(),
+          });
+        }
       }
     }
     return json(res, 201, { ok: true });
+  }
+
+  // POST /api/geolocate { bssids: ["A0:36:9F:11:22:33", …] } — owner/device
+  // auth (owner key OR any valid device token), rate-limited 20/min/IP: this
+  // endpoint calls a PAID geolocation provider, so it must not be open to
+  // quota abuse. Resolves a Wi-Fi fingerprint into a real coordinate via
+  // Google Geolocation API with Mozilla Location fallback. Cache: resolved
+  // BSSIDs are remembered (30 days) so repeat scans never burn the quota.
+  // WITHOUT GEOLOCATION_API_KEY it answers honestly:
+  // 501 { source: "unresolved" } — the desktop must never fake a coordinate.
+  if (isPost && url.pathname === "/api/geolocate") {
+    if (!anyDeviceOk(req)) return json(res, 401, { error: "Owner key or device token required." });
+    if (geoLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many geolocation requests — try again in a minute." });
+    }
+    const body = await readBody(req);
+    const bssids = (Array.isArray(body.bssids) ? body.bssids : [])
+      .map((b) => String(b).trim().toUpperCase())
+      .filter((b) => /^([0-9A-F]{2}:){5}[0-9A-F]{2}$/.test(b))
+      .slice(0, 20);
+    if (bssids.length === 0) return json(res, 400, { error: "No valid BSSIDs provided." });
+
+    // 1) Cache hit — the fingerprint is already resolved. Prune expired
+    // entries opportunistically so the persisted geoCache never grows unbounded.
+    store.geoCache = store.geoCache || {};
+    const now = Date.now();
+    if (store.geoCache._prunedAt === undefined || now - store.geoCache._prunedAt > 24 * 3.6e6) {
+      store.geoCache._prunedAt = now;
+      for (const [k, v] of Object.entries(store.geoCache)) {
+        if (k !== "_prunedAt" && now - new Date(v.at).getTime() > 30 * 24 * 3.6e6) delete store.geoCache[k];
+      }
+      if (Object.keys(store.geoCache).length > 5000) {
+        // Hard cap: keep only the 2000 freshest entries.
+        const sorted = Object.entries(store.geoCache)
+          .filter(([k]) => k !== "_prunedAt")
+          .sort((a, b) => new Date(b[1].at) - new Date(a[1].at));
+        store.geoCache = { _prunedAt: store.geoCache._prunedAt };
+        for (const [k, v] of sorted.slice(0, 2000)) store.geoCache[k] = v;
+      }
+    }
+    for (const b of bssids) {
+      const hit = store.geoCache[b];
+      if (hit && now - new Date(hit.at).getTime() < 30 * 24 * 3.6e6) {
+        return json(res, 200, {
+          ok: true,
+          source: "wifi_resolved",
+          lat: hit.lat,
+          lng: hit.lng,
+          accuracy: hit.accuracy,
+          cached: true,
+        });
+      }
+    }
+
+    if (!process.env.GEOLOCATION_API_KEY) {
+      return json(res, 501, {
+        ok: false,
+        source: "unresolved",
+        error: "Wi-Fi geolocation is not configured on this server (set GEOLOCATION_API_KEY).",
+      });
+    }
+
+    // 2) Google Geolocation, then Mozilla Location as fallback.
+    const wifiAccessPoints = bssids.map((macAddress) => ({ macAddress }));
+    let resolved = null;
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 8000);
+      const resG = await fetch(
+        `https://www.googleapis.com/geolocation/v1/geolocate?key=${encodeURIComponent(process.env.GEOLOCATION_API_KEY)}`,
+        { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wifiAccessPoints }), signal: ctrl.signal },
+      );
+      clearTimeout(t);
+      if (resG.ok) {
+        const j = await resG.json();
+        if (j && j.location && Number.isFinite(j.location.lat) && Number.isFinite(j.location.lng)) {
+          resolved = { lat: j.location.lat, lng: j.location.lng, accuracy: Number(j.accuracy) || 50 };
+        }
+      }
+    } catch (_) {
+      /* fall through to Mozilla */
+    }
+    if (!resolved) {
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 8000);
+        const resM = await fetch(
+          `https://location.services.mozilla.com/v1/geolocate?key=${encodeURIComponent(process.env.GEOLOCATION_API_KEY)}`,
+          { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ wifiAccessPoints }), signal: ctrl.signal },
+        );
+        clearTimeout(t);
+        if (resM.ok) {
+          const j = await resM.json();
+          if (j && j.location && Number.isFinite(j.location.lat) && Number.isFinite(j.location.lng)) {
+            resolved = { lat: j.location.lat, lng: j.location.lng, accuracy: Number(j.accuracy) || 100 };
+          }
+        }
+      } catch (_) {
+        /* unresolved */
+      }
+    }
+    if (!resolved) {
+      return json(res, 502, { ok: false, source: "unresolved", error: "No geolocation provider answered for this fingerprint." });
+    }
+    // Cache the whole fingerprint so the next scan is instant and quota-free.
+    for (const b of bssids) store.geoCache[b] = { ...resolved, at: new Date().toISOString() };
+    saveStore();
+    return json(res, 200, { ok: true, source: "wifi_resolved", ...resolved, cached: false });
+  }
+
+  // GET /api/nearest?lat=&lng=&maxM= — owner auth. The nearest device fix to
+  // a point (used for "nearest device to a community sighting"). In Neon mode
+  // this runs a real PostGIS ST_Distance query; file mode uses haversine with
+  // the identical API contract.
+  if (!isPost && url.pathname === "/api/nearest") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+    const lat = Number(url.searchParams.get("lat"));
+    const lng = Number(url.searchParams.get("lng"));
+    const maxM = Number(url.searchParams.get("maxM") || 50000);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng) || lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return json(res, 400, { error: "Invalid coordinates." });
+    }
+    const nearest = await storage.nearestFix(store, lat, lng, Number.isFinite(maxM) ? maxM : 50000);
+    return json(res, 200, { nearest });
   }
 
   // POST /api/pair/register { label } → { code, deviceId }
@@ -641,10 +829,32 @@ async function route(req, res) {
   // → { deviceId, token }. The pairing code is the credential; the returned
   // token authenticates the agent's device-scoped calls once DRAVEX_OWNER_KEY
   // is set. A Dravex Tag can claim with its fixed 12-hex staticBeacon id.
+  // Brute-force hardened: 10 claims/min/IP and a code locks after 5 failures
+  // (it is deleted — the owner must issue a fresh code).
   if (isPost && parts.join("/") === "api/pair/claim") {
+    if (claimLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many pairing attempts — wait a minute." });
+    }
     const body = await readBody(req);
-    const deviceId = store.pairCodes[body.code];
-    if (!deviceId) return json(res, 404, { error: "Unknown or expired pairing code." });
+    const code = String(body.code || "").trim().toUpperCase();
+    store.claimFails = store.claimFails || {};
+    // Bound the persisted failure map (one key per attempted code value) so
+    // distributed guessing can't grow it forever.
+    if (Object.keys(store.claimFails).length > 5000) store.claimFails = {};
+    if (store.claimFails[code] >= 5) {
+      delete store.pairCodes[code]; // locked: destroy the code entirely
+      delete store.claimFails[code];
+      saveStore();
+      return json(res, 429, { error: "This pairing code is locked — issue a new one." });
+    }
+    const deviceId = store.pairCodes[code];
+    if (!deviceId) {
+      // Count failures against this code value (covers real brute-force AND
+      // a typo'd code reaching its limit — either way, lock and move on).
+      store.claimFails[code] = (store.claimFails[code] || 0) + 1;
+      saveStore();
+      return json(res, 404, { error: "Unknown or expired pairing code." });
+    }
     const dev = device(deviceId);
     dev.hostname = body.hostname || dev.hostname;
     dev.serialNumber = body.serialNumber || dev.serialNumber;
@@ -654,7 +864,8 @@ async function route(req, res) {
     if (/^[0-9a-f]{12}$/.test(sb)) dev.staticBeacon = sb;
     dev.pairedAt = dev.pairedAt || new Date().toISOString();
     dev.lastSeenAt = new Date().toISOString();
-    delete store.pairCodes[body.code]; // single use
+    delete store.pairCodes[code]; // single use
+    delete store.claimFails[code];
     saveStore();
     return json(res, 200, { deviceId, token: dev.token });
   }
@@ -679,6 +890,10 @@ async function route(req, res) {
       lost: !!d.lost,
       operator: deviceOperator(d),
       sightingCount: (d.sightings || []).length,
+      verifiedAt: d.verifiedAt || null,
+      transferredAt: d.transferredAt || null,
+      recoveryMessage: d.recoveryMessage || null,
+      contactCount: (d.contactMessages || []).length,
     }));
     return json(res, 200, list);
   }
@@ -807,6 +1022,103 @@ async function route(req, res) {
       });
     }
 
+    // POST /api/devices/:id/transfer — ownership handover for the second-life
+    // market (the "Verified → Recovered" lifecycle's resale path). The device
+    // is cleared from the stolen registry, its lost state is dropped, the OLD
+    // agent credential is rotated (the previous owner's agent can no longer
+    // call device-scoped endpoints) and a fresh single-use pairing code is
+    // issued for the NEW owner's agent to claim. PRIVACY: the previous
+    // owner's location history, webcam evidence and sightings are PURGED —
+    // webcam photos are high-risk NDPA data and must never follow a device
+    // into a stranger's hands.
+    if (action === "transfer" && isPost) {
+      if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+      dev.lost = false;
+      dev.recoveryCode = null;
+      dev.verifiedAt = null;
+      dev.transferredAt = new Date().toISOString();
+      // Purge everything the previous owner generated on this physical device.
+      dev.fixes = [];
+      dev.lastFix = null;
+      dev.evidence = [];
+      dev.sightings = [];
+      dev.lastSightingAlertAt = null;
+      dev.lastSightingSignatures = [];
+      dev.contactMessages = [];
+      dev.recoveryMessage = null;
+      dev.events = [{ type: "transfer", at: dev.transferredAt }];
+      dev.lastSeenAt = null;
+      dev.reconnectedAt = null;
+      // Registry: this physical device reads clean for its next owner.
+      syncRegistry(dev);
+      // Rotate the credential so only the new owner's agent can act.
+      dev.token = randomBytes(24).toString("hex");
+      const code = `DX-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
+      store.pairCodes[code] = dev.deviceId;
+      // Disarm any pending lost/found commands so the next owner starts clean.
+      dev.commands = (dev.commands || []).filter((c) => c.executedAt);
+      raiseAlert("transfer", dev, `${dev.hostname || "A device"} was transferred to a new owner — registry cleared, previous owner data purged, new pairing code issued.`);
+      saveStore();
+      return json(res, 200, { ok: true, code, deviceId: dev.deviceId });
+    }
+
+    // POST /api/devices/:id/verify — the owner confirms the device is back
+    // ("Verified → Recovered"). Resolves the registry and records a recovered
+    // event; unlike mark-found it also pins verifiedAt for the recovery view.
+    if (action === "verify" && isPost) {
+      if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+      dev.lost = false;
+      dev.recoveryCode = null;
+      dev.verifiedAt = new Date().toISOString();
+      dev.events.push({ type: "recovered", at: dev.verifiedAt });
+      dev.commands = (dev.commands || []).filter((c) => c.executedAt); // disarm
+      syncRegistry(dev);
+      raiseAlert("recovered", dev, `${dev.hostname || "A device"} was verified recovered by its owner.`);
+      saveStore();
+      return json(res, 200, { ok: true, verifiedAt: dev.verifiedAt });
+    }
+
+    // PUT /api/devices/:id/recovery-message { message, contactPreference? }
+    // — owner sets the one-way message shown to a good samaritan who finds
+    // the device (never reveals the owner's identity to the public).
+    if (action === "recovery-message" && req.method === "PUT") {
+      if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+      const body = await readBody(req);
+      const message = String(body.message || "").trim().slice(0, 280);
+      if (!message) return json(res, 400, { error: "Message is required." });
+      dev.recoveryMessage = {
+        message,
+        contactPreference: String(body.contactPreference || "").trim().slice(0, 120) || null,
+        at: new Date().toISOString(),
+      };
+      saveStore();
+      return json(res, 200, { ok: true, recoveryMessage: dev.recoveryMessage });
+    }
+
+    // POST /api/devices/:id/contact { message } — public, rate-limited.
+    // A good samaritan (or a thief having a change of heart) sends the owner
+    // ONE message through this device's own recovery page. The sender's
+    // identity is never recorded — only the message text and time.
+    if (action === "contact" && isPost) {
+      if (contactLimiter.limited(req.socket.remoteAddress || "unknown")) {
+        return json(res, 429, { error: "Too many messages — try again later." });
+      }
+      const body = await readBody(req);
+      const message = String(body.message || "").trim().slice(0, 280);
+      if (!message) return json(res, 400, { error: "Message is required." });
+      if (!dev.lost) return json(res, 200, { ok: true }); // quiet no-op: not in recovery
+      dev.contactMessages = dev.contactMessages || [];
+      if (dev.contactMessages.length >= 10) dev.contactMessages = dev.contactMessages.slice(-9);
+      dev.contactMessages.push({
+        id: randomUUID(),
+        message,
+        at: new Date().toISOString(),
+      });
+      saveStore();
+      raiseAlert("contact", dev, `${dev.hostname || "Your device"}: a finder sent you a message — check the recovery view.`);
+      return json(res, 200, { ok: true });
+    }
+
     // GET /api/devices/:id/sightings — community BLE sightings, newest first.
     if (action === "sightings" && !isPost) {
       if (!ownerOrDeviceOk(req, dev)) return json(res, 401, { error: "Owner key or device token required." });
@@ -901,6 +1213,10 @@ async function route(req, res) {
         lost: !!dev.lost,
         operator: deviceOperator(dev),
         sightingCount: (dev.sightings || []).length,
+        verifiedAt: dev.verifiedAt || null,
+        transferredAt: dev.transferredAt || null,
+        recoveryMessage: dev.recoveryMessage || null,
+        contactMessages: (dev.contactMessages || []).slice(-10).reverse(),
       });
     }
 

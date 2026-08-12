@@ -47,4 +47,19 @@
     <string name="registry_stolen">STOLEN — this IMEI is listed in the Dravex stolen-device registry. Do not use it; report it to the nearest police station.</string>
     <string name="registry_clean">Clean — no active stolen report for this IMEI.</string>
     <string name="registry_unreachable">Registry unreachable — check your server URL and internet connection.</string>
+
+    <!-- Battery protection (OEM killers) -->
+    <string name="battery_protect_button">Protect from battery optimization</string>
+    <string name="battery_protect_title">Keep tracking alive</string>
+    <string name="battery_protect_body">Phone makers (Samsung, Tecno, Infinix…) often kill background apps to save battery — that would silence Dravex exactly when a thief powers the phone on. Allow Dravex to ignore battery optimization so tracking, the beacon and evidence capture keep running.</string>
+    <string name="battery_protect_allow">Allow always</string>
+    <string name="battery_protect_manufacturer">Open phone-maker settings</string>
+
+    <!-- Finder contact (recovery channel) -->
+    <string name="contact_owner_title">Message the owner</string>
+    <string name="contact_owner_body">This device is reported lost. If you found it, send the owner one short message — it is delivered anonymously and the owner is notified immediately. The device stays locked until the owner unlocks it.</string>
+    <string name="contact_owner_hint">e.g. "I found this phone at Ikeja bus stop. Call 0803…"</string>
+    <string name="contact_owner_send">Send anonymously</string>
+    <string name="contact_owner_empty">Write a short message first.</string>
+    <string name="contact_owner_sent">Message sent to the owner. This device remains locked and protected.</string>
 </resources>

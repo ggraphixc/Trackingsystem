@@ -170,20 +170,23 @@
     if (!fix) return;
     const map = $("map");
     map.classList.add("has-fix");
+    // wifi_resolved is the honest "real BSSID→coordinate" source from
+    // POST /api/geolocate; the ladder highlights the same Wi-Fi row.
+    const ladderSource = fix.source === "wifi_resolved" ? "wifi" : fix.source;
     $("map-coords").textContent = `${fix.lat.toFixed(4)}°, ${fix.lng.toFixed(4)}° · ${fix.source}`;
 
     document.querySelectorAll(".ladder-row").forEach((row) => row.classList.remove("current"));
-    const current = document.querySelector(`.ladder-row[data-source="${fix.source}"]`);
+    const current = document.querySelector(`.ladder-row[data-source="${ladderSource}"]`);
     if (current) current.classList.add("current");
 
     const time = fix.timestamp ? new Date(fix.timestamp).toLocaleTimeString() : "just now";
     const lastInfo = fix.lastKnownFrom ? ` (from ${new Date(fix.lastKnownFrom).toLocaleTimeString()})` : "";
 
-    if (fix.source === "wifi") {
+    if (ladderSource === "wifi") {
       $("ladder-wifi-detail").textContent = `${fix.networks ?? 0} network${fix.networks === 1 ? "" : "s"} seen · ±${fix.accuracy} m`;
       $("ladder-ip-detail").textContent = fix.ipAddress ? `IP ${fix.ipAddress}` : "No IP lookup yet";
       $("ladder-last-detail").textContent = "—";
-    } else if (fix.source === "ip") {
+    } else if (ladderSource === "ip") {
       $("ladder-wifi-detail").textContent = "No Wi-Fi networks found";
       $("ladder-ip-detail").textContent = `${fix.ipAddress || "unknown IP"} · ±${fix.accuracy} m`;
       $("ladder-last-detail").textContent = "—";
@@ -272,6 +275,10 @@
           ? `<button class="btn-icon evidence" data-evidence-id="${escapeHtml(d.deviceId)}" title="Captured evidence photos">📷 ${evidence}</button>`
           : "";
         const report = `<button class="btn-icon report" data-report-id="${escapeHtml(d.deviceId)}" title="Printable incident report — IMEI, timeline, sightings, evidence">📄</button>`;
+        const verify = d.lost
+          ? `<button class="btn-icon verify" data-verify-id="${escapeHtml(d.deviceId)}" title="Verified — back in your possession">✓</button>`
+          : "";
+        const transfer = `<button class="btn-icon transfer" data-transfer-id="${escapeHtml(d.deviceId)}" title="Transfer ownership (resale) — clears registry, new pairing code">↔</button>`;
         return `<tr>
           <td>
             <div class="device-cell">
@@ -287,7 +294,7 @@
             <button class="btn-lost ${d.lost ? "lost" : ""}" data-lost-id="${escapeHtml(d.deviceId)}" data-lost="${d.lost ? "1" : "0"}">
               ${d.lost ? "Lost — click to find" : "Mark lost"}
             </button>
-            ${sight}${ev}${report}
+            ${verify}${transfer}${sight}${ev}${report}
           </td>
         </tr>`;
       })
@@ -300,6 +307,12 @@
 
     document.querySelectorAll("[data-lost-id]").forEach((btn) => {
       btn.addEventListener("click", () => toggleDeviceLost(btn));
+    });
+    document.querySelectorAll("[data-transfer-id]").forEach((btn) => {
+      btn.addEventListener("click", () => transferDevice(btn.getAttribute("data-transfer-id")));
+    });
+    document.querySelectorAll("[data-verify-id]").forEach((btn) => {
+      btn.addEventListener("click", () => verifyDevice(btn.getAttribute("data-verify-id")));
     });
     document.querySelectorAll("[data-sightings]").forEach((btn) => {
       btn.addEventListener("click", () => showSightings(btn.getAttribute("data-sightings")));
@@ -343,6 +356,39 @@
           `${name} marked lost. Recovery code: ${res.recoveryCode}\n\nKeep this code — it unlocks the device's app (ownership check) if the phone comes back to you.`,
         );
       }
+    }
+  }
+
+  /** Ownership handover for resale (registry clears, old agent disconnected). */
+  async function transferDevice(id) {
+    const dev = devices.find((d) => d.deviceId === id);
+    const name = deviceName(dev || {});
+    if (
+      !confirm(
+        `${name}: transfer to a new owner? Its stolen-registry listing is cleared, all previous owner data is purged, and a fresh pairing code is issued for the new owner's agent.`,
+      )
+    )
+      return;
+    const res = await api.transferDevice(id);
+    if (res && res.ok) {
+      alert(`Device transferred. Give this pairing code to the new owner (single use):\n\n${res.code}\n\nThey enter it in the Dravex agent to link the device.`);
+      refreshDevices();
+    } else {
+      alert("Could not transfer — is the server reachable?");
+    }
+  }
+
+  /** Lifecycle step "Verified → Recovered": owner confirms the device is back. */
+  async function verifyDevice(id) {
+    const dev = devices.find((d) => d.deviceId === id);
+    const name = deviceName(dev || {});
+    if (!confirm(`${name}: confirm this device is back in your possession? The registry listing resolves and the beacon disarms.`)) return;
+    const res = await api.verifyDevice(id);
+    if (res && res.ok) {
+      alert(`${name} marked verified-recovered.`);
+      refreshDevices();
+    } else {
+      alert("Could not verify — is the server reachable?");
     }
   }
 

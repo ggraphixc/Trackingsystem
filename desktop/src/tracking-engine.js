@@ -7,18 +7,27 @@ const https = require("https");
  * Dravex desktop "signal ladder".
  *
  * Laptops have no GPS and no IMEI, so the ladder is:
- *   1. Wi-Fi positioning   — scan nearby BSSIDs (indoor-accurate)
+ *   1. Wi-Fi positioning   — BSSIDs resolved by the server (Google
+ *                            Geolocation API / Mozilla Location, cached)
  *   2. IP geolocation      — public IP lookup (coarse, always available)
  *   3. Last known fix      — whatever we stored last time
  *
- * A real deployment resolves BSSIDs against a Wi-Fi geolocation database
- * (e.g. Google Geolocation API / Mozilla Location). The scaffold demonstrates
- * the pipeline with a demo mapping + IP fallback.
+ * Honesty rule: a coordinate is NEVER invented. If the server cannot resolve
+ * the Wi-Fi fingerprint (501, unreachable, or no provider), the fix falls
+ * back to IP — and if there is no IP either, to the last-known fix, which is
+ * explicitly marked `last_known`. The `wifi` source only ever appears after
+ * a real `wifi_resolved` geolocation answer.
+ *
+ * @param {string} stateFile          path to the agent state JSON
+ * @param {(bssids: string[]) => Promise<object|null>} geolocateWifi
+ *   optional resolver injected by main.js — posts the fingerprint to
+ *   POST /api/geolocate and returns { lat, lng, accuracy } or null.
  */
 class TrackingEngine extends EventEmitter {
-  constructor(stateFile) {
+  constructor(stateFile, geolocateWifi) {
     super();
     this.stateFile = stateFile;
+    this.geolocateWifi = typeof geolocateWifi === "function" ? geolocateWifi : null;
     this._timer = null;
     this.lastFix = null;
     this._loadLastFix();
@@ -50,7 +59,19 @@ class TrackingEngine extends EventEmitter {
   async trackNow() {
     const wifi = await this.scanWifi();
     const ip = await this.ipGeolocate();
-    const fix = this.buildFix(wifi, ip);
+    // Signal 1 upgrade: resolve the fingerprint to a real coordinate. Only a
+    // genuine resolution counts as "wifi" — everything else falls back.
+    let geo = null;
+    if (wifi.length > 0 && this.geolocateWifi) {
+      try {
+        const bssids = wifi.map((ap) => ap.bssid).filter(Boolean);
+        geo = await this.geolocateWifi(bssids);
+        if (geo && !(Number.isFinite(geo.lat) && Number.isFinite(geo.lng))) geo = null;
+      } catch (_) {
+        geo = null; // server unreachable — never crash the ladder
+      }
+    }
+    const fix = this.buildFix(wifi, ip, geo);
     if (fix) {
       this.lastFix = fix;
       this.emit("fix", fix);
@@ -186,25 +207,27 @@ class TrackingEngine extends EventEmitter {
 
   /* ---------------- Fusion: build the fix ---------------- */
 
-  buildFix(wifi, ip) {
+  buildFix(wifi, ip, geo) {
     const now = new Date().toISOString();
+    const networks = wifi && wifi.length > 0 ? wifi : [];
 
-    // Demo mapping: if we see 1+ APs we assume an indoor (Wi-Fi-accurate)
-    // position. In production, resolve BSSIDs against a geolocation DB.
-    if (wifi && wifi.length > 0) {
-      const base = this.lastFix && this.lastFix.source === "wifi" ? this.lastFix : null;
+    // Signal 1: a REAL server-resolved Wi-Fi position. Never fabricated.
+    if (geo && Number.isFinite(geo.lat) && Number.isFinite(geo.lng)) {
       return {
-        lat: base ? base.lat + (Math.random() - 0.5) * 0.0006 : 6.5244 + (Math.random() - 0.5) * 0.01,
-        lng: base ? base.lng + (Math.random() - 0.5) * 0.0006 : 3.3792 + (Math.random() - 0.5) * 0.01,
-        accuracy: 30 + Math.round(Math.random() * 40), // ~30–70 m
-        source: "wifi",
+        lat: geo.lat,
+        lng: geo.lng,
+        accuracy: Number.isFinite(Number(geo.accuracy)) ? Number(geo.accuracy) : 50,
+        source: "wifi_resolved",
         ipAddress: ip ? ip.ip : null,
-        networks: wifi, // the full fingerprint [{bssid, ssid, rssi}]
+        networks,
         timestamp: now,
         confidence: 80,
+        resolvedBy: geo.source || "wifi_resolved",
       };
     }
 
+    // Signal 2: IP geolocation (city-level, always available). The Wi-Fi
+    // fingerprint still rides along so the dashboard can match by network.
     if (ip && ip.lat && ip.lng) {
       return {
         lat: ip.lat,
@@ -212,7 +235,7 @@ class TrackingEngine extends EventEmitter {
         accuracy: 1200, // IP geolocation is city-level
         source: "ip",
         ipAddress: ip.ip,
-        networks: [],
+        networks,
         timestamp: now,
         confidence: 55,
       };

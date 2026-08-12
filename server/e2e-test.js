@@ -303,6 +303,105 @@ async function api(path, body) {
   console.log(`[29] short query rejected: HTTP ${short.status}`);
   if (short.status !== 400) throw new Error("short query not rejected");
 
+  // 30. Wi-Fi geolocation is HONEST when unconfigured: without
+  // GEOLOCATION_API_KEY the server answers 501 { source: "unresolved" } — the
+  // desktop must never fabricate a coordinate from a fingerprint.
+  const geo = await fetch(BASE + "/api/geolocate", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ bssids: ["A0:36:9F:11:22:33", "F8:1A:67:44:55:66"] }),
+  });
+  const geoBody = await geo.json();
+  console.log(`[30] geolocate unconfigured: HTTP ${geo.status} source=${geoBody.source}`);
+  if (geo.status !== 501 || geoBody.source !== "unresolved") throw new Error("geolocate not honest when unconfigured");
+
+  // 31. /api/nearest answers with the nearest device fix (haversine in file
+  // mode, PostGIS ST_Distance on Neon — same contract). The query uses a
+  // coordinate unique to THIS run's deviceId so stale devices from earlier
+  // runs against a persistent store can't win the distance query.
+  const seed = parseInt(deviceId.slice(0, 4), 16) % 1000;
+  const uLat = 5 + seed / 10000;
+  const uLng = 3 + seed / 10000;
+  await client.postFix(deviceId, {
+    lat: uLat, lng: uLng, accuracy: 25, source: "gps",
+    timestamp: new Date().toISOString(), confidence: 90,
+  });
+  // The server persists (and mirrors spatial points) on a 200 ms debounce —
+  // settle before querying so the mirror includes this run's fresh fix.
+  await new Promise((r) => setTimeout(r, 800));
+  const near = await api(`/api/nearest?lat=${uLat}&lng=${uLng}&maxM=10000`);
+  console.log(`[31] nearest: ${near.nearest ? near.nearest.deviceId === deviceId ? "this device" : "other" : "none"} dist=${near.nearest?.distMeters}m`);
+  if (!near.nearest || near.nearest.deviceId !== deviceId) throw new Error("nearest device query failed");
+
+  // 32. Ownership transfer (second-life): the registry clears and a fresh
+  // single-use pairing code is issued for the new owner's agent.
+  const transfer = await api(`/api/devices/${deviceId}/transfer`, {});
+  const checkAfterTransfer = await api("/api/check?q=SN12345");
+  const claimNew = await client.claim(transfer.code, {
+    hostname: "NEW-OWNER-LAPTOP",
+    serialNumber: "SN12345",
+    platform: "win32",
+  });
+  console.log(
+    `[32] transfer: ok=${transfer.ok} newCode=${!!transfer.code} check=${checkAfterTransfer.status} newClaim=${claimNew.deviceId === deviceId}`,
+  );
+  if (!transfer.ok || !transfer.code) throw new Error("transfer failed");
+  if (checkAfterTransfer.found) throw new Error("registry not cleared after transfer");
+  if (claimNew.deviceId !== deviceId) throw new Error("new owner could not claim the transferred device");
+
+  // 33. Verified lifecycle: re-mark lost, then verify → recovered event and a
+  // clean registry read for the same physical serial.
+  await api(`/api/devices/${deviceId}/lost`, { lost: true });
+  const verify = await api(`/api/devices/${deviceId}/verify`, {});
+  const devVerified = await api(`/api/devices/${deviceId}`);
+  const checkVerified = await api("/api/check?q=SN12345");
+  console.log(
+    `[33] verify: ok=${verify.ok} verifiedAt=${!!devVerified.verifiedAt} recoveredEvent=${devVerified.events.some((e) => e.type === "recovered")} check=${checkVerified.status}`,
+  );
+  if (!verify.ok || !devVerified.verifiedAt) throw new Error("verify failed");
+  if (!devVerified.events.some((e) => e.type === "recovered")) throw new Error("recovered event missing");
+  if (checkVerified.found) throw new Error("registry not resolved after verify");
+
+  // 34. Recovery message + finder contact (M4): owner sets the one-way message,
+  // a finder posts anonymously, and the message lands in the device + alerts.
+  await api(`/api/devices/${deviceId}/lost`, { lost: true });
+  const msg = await fetch(BASE + `/api/devices/${deviceId}/recovery-message`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: "This is my phone — please contact me through Dravex.", contactPreference: "police station" }),
+  });
+  const contact = await fetch(BASE + `/api/devices/${deviceId}/contact`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: "I found this phone at the market." }),
+  });
+  const devContacted = await api(`/api/devices/${deviceId}`);
+  const contactAlert = (await api("/api/alerts/latest")).alerts.find(
+    (a) => a.type === "contact" && a.deviceId === deviceId,
+  );
+  console.log(
+    `[34] contact: msg=${msg.status} contact=${contact.status} inbox=${devContacted.contactMessages?.length ?? 0} alert=${!!contactAlert} ownerMsg=${devContacted.recoveryMessage?.message?.slice(0, 20)}…`,
+  );
+  if (msg.status !== 200 || !devContacted.recoveryMessage) throw new Error("recovery message not saved");
+  if (contact.status !== 200 || (devContacted.contactMessages || []).length !== 1) {
+    throw new Error("finder contact not stored");
+  }
+  if (!contactAlert) throw new Error("contact alert not raised");
+
+  // 35. A finder message for a NON-lost device is a quiet no-op (200, nothing
+  // stored) — the channel can't be used to poke at non-recovery devices.
+  await api(`/api/devices/${deviceId}/lost`, { lost: false });
+  const quiet = await fetch(BASE + `/api/devices/${deviceId}/contact`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ message: "ping" }),
+  });
+  const devQuiet = await api(`/api/devices/${deviceId}`);
+  console.log(`[35] contact on safe device: HTTP ${quiet.status} inboxStill=${devQuiet.contactMessages?.length ?? 0}`);
+  if (quiet.status !== 200 || (devQuiet.contactMessages || []).length !== 1) {
+    throw new Error("contact channel leaked onto a non-lost device");
+  }
+
   console.log("== E2E PASSED ==");
 })().then(
   () => {

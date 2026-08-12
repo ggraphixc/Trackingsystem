@@ -282,6 +282,12 @@ Zero-dependency Node HTTP server; dual-mode storage (JSON file ↔ Postgres when
 | `POST /api/devices/:id/batch` | device | offline-vault burst sync |
 | `GET/POST /api/devices/:id/events` | device / owner+device | SIM changes, reconnects |
 | `POST /api/devices/:id/lost` | owner | lost/found + recovery code + registry |
+| `POST /api/devices/:id/verify` | owner | **Verified → Recovered** lifecycle step (resolves registry, `recovered` event) |
+| `POST /api/devices/:id/transfer` | owner | ownership handover — rotate credential, clear registry, fresh pairing code |
+| `PUT /api/devices/:id/recovery-message` | owner | one-way message shown to a finder |
+| `POST /api/devices/:id/contact` | public (rate-limited) | anonymous finder→owner message (only stored while lost) |
+| `POST /api/geolocate` | owner/device | BSSID fingerprint → real coordinate (Google/Mozilla, cached; 501 honest when unconfigured) |
+| `GET /api/nearest` | owner | nearest device fix to a point (PostGIS `ST_Distance` on Neon / haversine in file mode) |
 | `GET /api/devices/:id/sightings` | owner/device | community sightings |
 | `GET/POST /api/devices/:id/evidence` | owner/device / device | webcam evidence |
 | `GET/POST /api/devices/:id/commands` + `/ack` | device poll / owner queue | remote commands |
@@ -291,7 +297,11 @@ Zero-dependency Node HTTP server; dual-mode storage (JSON file ↔ Postgres when
 | `GET /api/push/vapid-key`, `POST /api/push/(subscribe\|test)` | owner | web-push |
 
 **Limits:** fixes 100/device, alerts 50 ring buffer, sightings 50/device,
-body cap 5 MB (evidence data-URLs), sighting alert throttle 30 min.
+body cap 5 MB (evidence data-URLs), sighting alert throttle 30 min. Rate
+limiters (sliding 60 s, per-IP): check 30/min, claim 10/min (codes lock after
+5 failed attempts), sightings 30/min (+ 5-min dedupe by beacon+position),
+contact 5/min. Alert delivery: web-push + SMS fallback + `ALERT_WEBHOOK_URL`
+(email/webhook sink).
 
 ---
 
@@ -303,7 +313,10 @@ PostGIS point columns are the Phase-2 migration for coordinates.
 ```
 devices[]  { deviceId, hostname, serialNumber, imei, platform, token, staticBeacon,
              pairedAt, lastSeenAt, reconnectedAt, lastFix, fixes[], evidence[],
-             commands[], events[], sightings[], lost, recoveryCode }
+             commands[], events[], sightings[], lost, recoveryCode, verifiedAt,
+             transferredAt, recoveryMessage, contactMessages[] }
+geoCache   { "A0:36:9F:11:22:33": { lat, lng, accuracy, at } }   (30-day TTL)
+dravex_points (Neon/PostGIS) { device_id, kind (fix|sighting), point geometry(Point,4326), recorded_at } + GiST index
 stolen[]   { id, deviceId, type, imei, serialNumber, label, status(reported|resolved),
              reportedAt, resolvedAt }
 alerts[]   { id, type, deviceId, hostname, body, at, read }
@@ -422,7 +435,7 @@ identity that survives battery swaps. Server resolves static tag beacons via
 |---|---|---|
 | **1 — MVP** | Desktop agent ladder/lost-mode/webcam; Android agent + beacon; sync server; web vault/reporting; registry + check; recovery mode | ✅ **Done** (this repo) |
 | **1.5 — hardened** | Optional auth (owner key + device tokens), ownership lock, post-flash IMEI check, tag firmware | ✅ Done |
-| **2 — fidelity** | Real Wi-Fi geolocation DB lookup (Google/Mozilla); PostGIS points; iOS companion build; webcam face capture UX; SMS provider live | 🟡 Next |
+| **2 — fidelity** | Real Wi-Fi geolocation (server `/api/geolocate`, Google/Mozilla, cached) ✅ · PostGIS spatial mirror + `/api/nearest` ✅ · ownership transfer + verified lifecycle ✅ · finder contact relay ✅ · hardening (claim rate-limit, CORS allowlist, token-at-rest encryption) ✅ · email/webhook alert sink ✅ · Android boot re-arm + battery protection ✅ · macOS/Linux BLE watchers 🟡 · iOS companion build 🟡 · live SMS provider 🟡 | 🟡 In progress |
 | **3 — network** | Second-life marketplace + repair network; verified listings; monetization (Paystack/Flutterwave); public recovery stats | 🔜 |
 | **4 — partnerships** | NPF alignment, insurers, OEMs (power-off finding), NCC IMEI DMS, corporate fleets (B2B) | 🔜 |
 

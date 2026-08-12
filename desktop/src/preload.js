@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld("dravex", {
   vaultStatus: () => ipcRenderer.invoke("agent:vault-status"),
   listDevices: () => ipcRenderer.invoke("agent:list-devices"),
   setDeviceLost: (deviceId, lost) => ipcRenderer.invoke("agent:set-device-lost", deviceId, lost),
+  transferDevice: (deviceId) => ipcRenderer.invoke("agent:transfer-device", deviceId),
+  verifyDevice: (deviceId) => ipcRenderer.invoke("agent:verify-device", deviceId),
   getSightings: (deviceId) => ipcRenderer.invoke("agent:get-sightings", deviceId),
   getEvidence: (deviceId) => ipcRenderer.invoke("agent:get-evidence", deviceId),
   getDeviceDetail: (deviceId) => ipcRenderer.invoke("agent:get-device-detail", deviceId),

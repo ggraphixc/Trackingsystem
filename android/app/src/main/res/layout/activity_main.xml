@@ -79,6 +79,14 @@
             android:layout_marginTop="4dp"
             android:text="@string/start_tracking" />
 
+        <Button
+            android:id="@+id/batteryProtectButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/battery_protect_button"
+            android:textSize="12sp" />
+
         <Switch
             android:id="@+id/lostSwitch"
             android:layout_width="match_parent"

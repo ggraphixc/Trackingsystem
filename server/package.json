@@ -7,6 +7,9 @@
     "start": "node server.js",
     "check": "node --check server.js && node --check storage.js && node --check push.js"
   },
+  "engines": {
+    "node": ">=18.17.0"
+  },
   "optionalDependencies": {
     "pg": "^8.13.1"
   }

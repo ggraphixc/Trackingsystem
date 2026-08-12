@@ -1,9 +1,14 @@
 package com.dravex.agent
 
 import android.Manifest
+import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -80,9 +85,96 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton(R.string.recovery_contact_owner) { d, _ ->
                 d.dismiss()
                 ownershipLockShowing = false
-                maybeShowOwnershipLock()
+                showContactOwnerDialog()
             }
             .setOnDismissListener { ownershipLockShowing = false }
+            .show()
+    }
+
+    /**
+     * The finder channel (M4): a good samaritan holding the locked phone can
+     * send the owner ONE message through this device's own recovery page —
+     * anonymous, rate-limited server-side, lands in the owner's alerts.
+     */
+    private fun showContactOwnerDialog() {
+        val input = android.widget.EditText(this).apply {
+            hint = getString(R.string.contact_owner_hint)
+            maxLines = 4
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.contact_owner_title)
+            .setMessage(R.string.contact_owner_body)
+            .setView(input)
+            .setPositiveButton(R.string.contact_owner_send) { d, _ ->
+                d.dismiss()
+                val message = input.text.toString().trim()
+                if (message.isEmpty()) {
+                    Toast.makeText(this, R.string.contact_owner_empty, Toast.LENGTH_SHORT).show()
+                    ownershipLockShowing = false
+                    maybeShowOwnershipLock() // the barrier stays up
+                    return@setPositiveButton
+                }
+                val deviceId = state.deviceId
+                scope.launch {
+                    if (deviceId != null) {
+                        runCatching {
+                            SyncClient(state.serverUrl).postContactMessage(deviceId, message)
+                        }
+                    }
+                    runOnUiThread {
+                        Toast.makeText(
+                            this@MainActivity,
+                            R.string.contact_owner_sent,
+                            Toast.LENGTH_LONG,
+                        ).show()
+                        ownershipLockShowing = false
+                        maybeShowOwnershipLock() // re-lock — device stays protected
+                    }
+                }
+            }
+            .setNegativeButton(android.R.string.cancel) { d, _ ->
+                d.dismiss()
+                ownershipLockShowing = false
+                maybeShowOwnershipLock()
+            }
+            .show()
+    }
+
+    /**
+     * M7: guide the owner past OEM battery killers (Samsung/Tecno/Infinix
+     * background-manager screens). First the system IgnoreBatteryOptimizations
+     * opt-out, then per-OEM guidance.
+     */
+    private fun requestBatteryProtection() {
+        val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+        // Already exempt (or too old to ask) — no nagging on every toggle.
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+            pm.isIgnoringBatteryOptimizations(packageName)
+        ) {
+            return
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.battery_protect_title)
+            .setMessage(R.string.battery_protect_body)
+            .setPositiveButton(R.string.battery_protect_allow) { _, _ ->
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    try {
+                        startActivity(
+                            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                                .setData(Uri.parse("package:$packageName")),
+                        )
+                    } catch (_: Exception) {
+                        startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                    }
+                }
+            }
+            .setNeutralButton(R.string.battery_protect_manufacturer) { _, _ ->
+                // Samsung: Settings → Battery → Background usage limits → Never
+                // deep-sleep. Tecno/Infinix: Phone Manager → Autostart + battery
+                // optimization → allow. Open the OEM battery settings if possible.
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            }
+            .setNegativeButton(android.R.string.cancel, null)
             .show()
     }
 
@@ -179,9 +271,19 @@ class MainActivity : AppCompatActivity() {
         }
 
         binding.trackingSwitch.setOnCheckedChangeListener { _, on ->
-            if (on) TrackingService.start(this) else TrackingService.stop(this)
+            state.trackingEnabled = on
+            if (on) {
+                TrackingService.start(this)
+                // Nudge the owner past OEM battery killers so the foreground
+                // service actually survives backgrounding on Samsung/Tecno etc.
+                requestBatteryProtection()
+            } else {
+                TrackingService.stop(this)
+            }
             renderState()
         }
+
+        binding.batteryProtectButton.setOnClickListener { requestBatteryProtection() }
 
         binding.deviceCheckButton.setOnClickListener {
             val q = binding.imeiInput.text.toString().trim()

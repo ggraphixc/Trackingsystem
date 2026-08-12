@@ -21,14 +21,36 @@ class AppState(context: Context) {
         get() = prefs.getString("paired_at", null)
         set(v) = prefs.edit().putString("paired_at", v).apply()
 
-    /** Agent credential issued at claim — authorizes device-scoped API calls. */
+    /**
+     * Agent credential issued at claim — authorizes device-scoped API calls.
+     * Stored at rest as an AES-GCM blob; the key lives in the Android
+     * Keystore, so the plaintext token never touches SharedPreferences.
+     */
     var deviceToken: String?
-        get() = prefs.getString("device_token", null)
-        set(v) = prefs.edit().putString("device_token", v).apply()
+        get() {
+            val blob = prefs.getString("device_token_blob", null) ?: return null
+            // Plaintext never persisted; decrypt from the Keystore blob.
+            return KeystoreCrypto.decrypt(blob) ?: null
+        }
+        set(v) {
+            val ed = prefs.edit()
+            if (v.isNullOrBlank()) {
+                ed.remove("device_token_blob")
+            } else {
+                ed.putString("device_token_blob", KeystoreCrypto.encrypt(v))
+            }
+            ed.apply()
+        }
 
     var lostMode: Boolean
         get() = prefs.getBoolean("lost_mode", false)
         set(v) = prefs.edit().putBoolean("lost_mode", v).apply()
+
+    /** Owner opted into tracking — a BOOT_COMPLETED receiver re-arms the
+     *  foreground service after a reboot so lost mode survives power-cycles. */
+    var trackingEnabled: Boolean
+        get() = prefs.getBoolean("tracking_enabled", false)
+        set(v) = prefs.edit().putBoolean("tracking_enabled", v).apply()
 
     /**
      * Owner-set PIN delivered with the dashboard's `lost` command. While set,
