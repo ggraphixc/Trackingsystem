@@ -103,6 +103,16 @@ class SyncClient {
     return this._req("GET", `/api/devices/${deviceId}/evidence`);
   }
 
+  /** Full device detail (events, sightings, metadata). */
+  async getDevice(deviceId) {
+    return this._req("GET", `/api/devices/${deviceId}`);
+  }
+
+  /** Location-fix history, newest first (server caps at 100). */
+  async getFixes(deviceId, limit = 30) {
+    return this._req("GET", `/api/devices/${deviceId}/fixes?limit=${limit}`);
+  }
+
   /** All paired devices (phones + laptops) for the owner dashboard. */
   async listDevices() {
     return this._req("GET", "/api/devices");

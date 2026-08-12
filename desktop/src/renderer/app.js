@@ -260,6 +260,7 @@
         const ev = evidence > 0
           ? `<button class="btn-icon evidence" data-evidence-id="${escapeHtml(d.deviceId)}" title="Captured evidence photos">📷 ${evidence}</button>`
           : "";
+        const report = `<button class="btn-icon report" data-report-id="${escapeHtml(d.deviceId)}" title="Printable incident report — IMEI, timeline, sightings, evidence">📄</button>`;
         return `<tr>
           <td>
             <div class="device-cell">
@@ -275,7 +276,7 @@
             <button class="btn-lost ${d.lost ? "lost" : ""}" data-lost-id="${escapeHtml(d.deviceId)}" data-lost="${d.lost ? "1" : "0"}">
               ${d.lost ? "Lost — click to find" : "Mark lost"}
             </button>
-            ${sight}${ev}
+            ${sight}${ev}${report}
           </td>
         </tr>`;
       })
@@ -294,6 +295,15 @@
     });
     document.querySelectorAll("[data-evidence-id]").forEach((btn) => {
       btn.addEventListener("click", () => openEvidence(btn.getAttribute("data-evidence-id")));
+    });
+    document.querySelectorAll("[data-report-id]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        btn.disabled = true;
+        btn.textContent = "…";
+        await openReport(btn.getAttribute("data-report-id"));
+        btn.disabled = false;
+        btn.textContent = "📄";
+      });
     });
 
     renderNavBadges();
@@ -390,11 +400,15 @@
     </div>`;
   }
 
-  function sightingPopup(s) {
+  function sightingPopup(s, nearest, nearestDist) {
     const t = s.receivedAt ? new Date(s.receivedAt).toLocaleString() : "?";
+    const near = nearest
+      ? `<p class="popup-meta">Closest device: <b>${escapeHtml(deviceName(nearest))}</b> (${fmtKm(nearestDist)})</p>`
+      : "";
     return `<div>
       <p class="popup-title">Community sighting</p>
-      <p class="popup-meta">${Number(s.lat).toFixed(5)}°, ${Number(s.lng).toFixed(5)}°${s.accuracy ? ` · ±${s.accuracy} m` : ""}</p>
+      <p class="popup-meta">${Number(s.lat).toFixed(5)}°, ${Number(s.lng).toFixed(5)}°${Number(s.accuracy) ? ` · ±${Number(s.accuracy)} m` : ""}</p>
+      ${near}
       <p class="popup-meta">beacon ${escapeHtml(s.beacon || "")} · ${t}</p>
       <span class="popup-tag sighting">● Seen by another TrackNaija device</span>
     </div>`;
@@ -441,23 +455,52 @@
           .addTo(markerLayer);
       }
     }
+    // Fetch sightings for every device that has them, in parallel, keeping
+    // the owning device so the proximity view can say "whose beacon was heard".
     const withSightings = devices.filter((d) => (d.sightingCount || 0) > 0);
-    const sightingLists = await Promise.all(
+    const sightingPairs = [];
+    const lists = await Promise.all(
       withSightings.map(async (d) => {
         const res = await api.getSightings(d.deviceId);
-        return (res && res.sightings) || [];
+        const list = (res && res.sightings) || [];
+        return list.map((s) => ({ device: d, sighting: s }));
       }),
     );
-    for (const list of sightingLists) {
-      for (const s of list) {
-        if (!Number.isFinite(Number(s.lat)) || !Number.isFinite(Number(s.lng))) continue;
-        const ll = [Number(s.lat), Number(s.lng)];
-        addPoint(ll);
-        L.marker(ll, { icon: L.divIcon({ className: "pin pin-sighting", iconSize: [12, 12], iconAnchor: [6, 6] }) })
-          .bindPopup(sightingPopup(s))
-          .addTo(markerLayer);
+    lists.forEach((pairs) => sightingPairs.push(...pairs));
+
+    // Devices with a known position, for nearest-tracker distances.
+    const fixedDevices = devices.filter(
+      (d) => d.lastFix && Number.isFinite(d.lastFix.lat) && Number.isFinite(d.lastFix.lng),
+    );
+
+    for (const { device, sighting: s } of sightingPairs) {
+      if (!Number.isFinite(Number(s.lat)) || !Number.isFinite(Number(s.lng))) continue;
+      const ll = [Number(s.lat), Number(s.lng)];
+      addPoint(ll);
+      let nearest = null;
+      let nearestDist = Infinity;
+      for (const d of fixedDevices) {
+        const dist = haversineKm(d.lastFix.lat, d.lastFix.lng, Number(s.lat), Number(s.lng));
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          nearest = d;
+        }
+      }
+      L.marker(ll, { icon: L.divIcon({ className: "pin pin-sighting", iconSize: [12, 12], iconAnchor: [6, 6] }) })
+        .bindPopup(sightingPopup(s, nearest, nearestDist))
+        .addTo(markerLayer);
+      // Dashed violet line: which of your devices is closest to the sighting.
+      if (nearest) {
+        L.polyline([[nearest.lastFix.lat, nearest.lastFix.lng], ll], {
+          color: "#7c3aed",
+          weight: 2,
+          dashArray: "6 6",
+          opacity: 0.7,
+        }).addTo(markerLayer);
       }
     }
+
+    renderProximity(sightingPairs, fixedDevices);
 
     if (points.length > 0) {
       // maxZoom keeps single-device / co-located markers from zooming to
@@ -471,6 +514,242 @@
         "No positions yet — fixes and sightings appear here as devices report in. Map tiles need internet; markers are accurate either way.";
     }
     map.invalidateSize();
+  }
+
+  /** Distance between two points, in km (haversine). */
+  function haversineKm(lat1, lng1, lat2, lng2) {
+    const R = 6371;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    // Clamp to [0,1]: float drift on near-antipodal points can push a > 1,
+    // which would make Math.asin return NaN.
+    return 2 * R * Math.asin(Math.sqrt(Math.max(0, Math.min(1, a))));
+  }
+
+  function fmtKm(km) {
+    if (!Number.isFinite(km)) return "—";
+    if (km < 1) return `${Math.round(km * 1000)} m`;
+    return `${km.toFixed(1)} km`;
+  }
+
+  /** Below the map: which of your devices is nearest to each sighting. */
+  function renderProximity(sightingPairs, fixedDevices) {
+    const panel = $("proximity-panel");
+    const valid = sightingPairs.filter(({ sighting: s }) =>
+      Number.isFinite(Number(s.lat)) && Number.isFinite(Number(s.lng)),
+    );
+    if (valid.length === 0 || fixedDevices.length === 0) {
+      panel.classList.add("hidden");
+      return;
+    }
+    const rows = valid
+      .map(({ device, sighting: s }) => {
+        let nearest = null;
+        let nearestDist = Infinity;
+        for (const d of fixedDevices) {
+          const dist = haversineKm(d.lastFix.lat, d.lastFix.lng, Number(s.lat), Number(s.lng));
+          if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = d;
+          }
+        }
+        if (!nearest) return "";
+        return `<div class="proximity-row">
+          <span class="prox-icon"></span>
+          <div class="prox-body">
+            <p class="prox-title">${escapeHtml(deviceName(device))} beacon heard — closest device: <b>${escapeHtml(deviceName(nearest))}</b></p>
+            <p class="prox-meta">${s.receivedAt ? new Date(s.receivedAt).toLocaleString() : ""} · ${Number(s.lat).toFixed(4)}°, ${Number(s.lng).toFixed(4)}°</p>
+          </div>
+          <span class="prox-dist">${fmtKm(nearestDist)}</span>
+        </div>`;
+      })
+      .filter(Boolean)
+      .join("");
+    $("proximity-list").innerHTML = rows || '<p class="meta">No positioned devices to compare against yet.</p>';
+    panel.classList.remove("hidden");
+  }
+
+  /* ================= incident report ================= */
+
+  async function openReport(deviceId) {
+    const res = await api.getDeviceDetail(deviceId);
+    if (!res || !res.ok || !res.device) {
+      alert("Could not load report data — is the server reachable?");
+      return;
+    }
+    const html = buildReportHtml(res, devices); // all devices → real closest-tracker
+
+    const dev = res.device;
+    const slug = String(dev.hostname || "device").replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase() || "device";
+    const filename = `TrackNaija-Report-${slug}-${new Date().toISOString().slice(0, 10)}.html`;
+    const saved = await api.saveReport(html, filename);
+    if (saved && saved.ok) {
+      alert(
+        `Report saved to:\n${saved.path}\n\nIt opened in your browser — use Ctrl/Cmd+P to print or save as PDF.`,
+      );
+    } else {
+      alert("Could not write the report: " + ((saved && saved.error) || "unknown error"));
+    }
+  }
+
+  function reportRow(label, value, extraClass) {
+    return `<tr><th>${escapeHtml(label)}</th><td class="${extraClass || ""}">${value}</td></tr>`;
+  }
+
+  function buildReportHtml(res, allDevices) {
+    const dev = res.device;
+    const fixes = res.fixes || [];
+    const sightings = res.sightings || [];
+    const evidence = res.evidence || [];
+    const events = (dev.events || []).filter((e) => e.type === "sim_change" || e.type === "reconnected");
+    const now = new Date().toLocaleString();
+    const fix = dev.lastFix;
+    const lost = !!dev.lost;
+
+    // Closest-device per sighting: compare against ALL owned devices with a
+    // position (the map view does the same), falling back to this device alone.
+    const pool = (Array.isArray(allDevices) && allDevices.length > 0 ? allDevices : [dev]);
+    const fixedDevices = pool.filter((d) => d.lastFix && Number.isFinite(d.lastFix.lat));
+
+    const rows = [
+      reportRow("Status", lost ? '<span class="badge badge-lost">● LOST</span>' : '<span class="badge badge-safe">Active</span>'),
+      reportRow("Device name", escapeHtml(dev.hostname || "—")),
+      reportRow("Type", dev.type === "phone" ? "Phone" : "Laptop"),
+      reportRow(dev.type === "phone" ? "IMEI" : "Serial number", escapeHtml(dev.imei || dev.serialNumber || "—"), "mono"),
+      reportRow("Operator", escapeHtml(dev.operator || "—")),
+      reportRow("Platform", escapeHtml(dev.platform || "—")),
+      reportRow("Paired", dev.pairedAt ? new Date(dev.pairedAt).toLocaleString() : "—"),
+      reportRow("Last seen", dev.lastSeenAt ? new Date(dev.lastSeenAt).toLocaleString() : "—"),
+      reportRow("Sightings", String(sightings.length)),
+    ].join("");
+
+    const fixHtml = fix
+      ? `<div class="box">
+          <p><b>Last known position</b></p>
+          <p class="mono">${Number(fix.lat).toFixed(5)}°, ${Number(fix.lng).toFixed(5)}° · ±${fix.accuracy || "?"} m · ${escapeHtml(fix.source)}</p>
+          <p class="dim">${fix.timestamp ? new Date(fix.timestamp).toLocaleString() : new Date(fix.receivedAt || Date.now()).toLocaleString()}</p>
+        </div>`
+      : '<p class="dim">No fix recorded.</p>';
+
+    const fixRows = fixes
+      .slice(0, 30)
+      .map(
+        (f) => `<tr>
+          <td>${f.timestamp ? new Date(f.timestamp).toLocaleString() : "—"}</td>
+          <td class="mono">${Number(f.lat).toFixed(5)}°, ${Number(f.lng).toFixed(5)}°</td>
+          <td>${escapeHtml(f.source || "—")}</td>
+          <td>±${Number(f.accuracy) || "?"} m</td>
+        </tr>`,
+      )
+      .join("") || '<tr><td colspan="4" class="dim">No fix history yet.</td></tr>';
+
+    const eventRows = events
+      .map((e) => {
+        let detail = "";
+        if (e.type === "sim_change" && e.detail) {
+          detail = `SIM changed to ${escapeHtml(e.detail.to || "?" )}${e.detail.from ? ` (was ${escapeHtml(e.detail.from)})` : ""}`;
+        } else if (e.type === "reconnected" && e.detail) {
+          detail = `Came online after ${escapeHtml(String(e.detail.gapHours))}h offline`;
+        }
+        return `<tr><td>${new Date(e.at).toLocaleString()}</td><td>${escapeHtml(e.type.replace("_", " "))}</td><td>${detail || "—"}</td></tr>`;
+      })
+      .join("") || '<tr><td colspan="3" class="dim">No SIM-change or reconnect events.</td></tr>';
+
+    const sightRows = sightings
+      .map((s) => {
+        let nearest = null;
+        let nearestDist = Infinity;
+        for (const d of fixedDevices) {
+          const dist = haversineKm(d.lastFix.lat, d.lastFix.lng, Number(s.lat), Number(s.lng));
+          if (dist < nearestDist) {
+            nearestDist = dist;
+            nearest = d;
+          }
+        }
+        const t = s.receivedAt || s.at;
+        return `<tr>
+          <td>${t ? new Date(t).toLocaleString() : "—"}</td>
+          <td class="mono">${Number(s.lat).toFixed(5)}°, ${Number(s.lng).toFixed(5)}°${Number(s.accuracy) ? ` ±${Number(s.accuracy)}m` : ""}</td>
+          <td>${nearest ? escapeHtml(deviceName(nearest)) : "—"}</td>
+          <td>${nearest ? fmtKm(nearestDist) : "—"}</td>
+        </tr>`;
+      })
+      .join("") || '<tr><td colspan="4" class="dim">No community sightings. Sightings appear while the device is marked lost.</td></tr>';
+
+    const evidenceHtml = evidence
+      .map((e) => {
+        const t = e.capturedAt || e.receivedAt;
+        return `<figure class="photo">
+          <img src="${escapeHtml(e.dataUrl)}" alt="Evidence photo" />
+          <figcaption>${t ? new Date(t).toLocaleString() : ""}</figcaption>
+        </figure>`;
+      })
+      .join("") || '<p class="dim">No webcam evidence captured.</p>';
+
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>TrackNaija Incident Report — ${escapeHtml(dev.hostname || "device")}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #1e293b; margin: 0 auto; padding: 32px 40px; max-width: 900px; background: #fff; }
+  h1 { font-size: 22px; margin: 4px 0 2px; }
+  h2 { font-size: 15px; margin: 26px 0 10px; border-bottom: 2px solid #e2e8f0; padding-bottom: 6px; }
+  .brand { color: #f97316; font-weight: 700; font-size: 13px; letter-spacing: 0.04em; }
+  .meta { color: #64748b; font-size: 12px; margin: 0; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid #e2e8f0; text-align: left; vertical-align: top; }
+  th { color: #64748b; font-weight: 600; width: 40%; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .badge-lost { background: #fef2f2; color: #dc2626; }
+  .badge-safe { background: #ecfdf5; color: #059669; }
+  .box { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; background: #f8fafc; font-size: 13px; }
+  .box p { margin: 4px 0; }
+  .dim { color: #94a3b8; }
+  .photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  figure { margin: 0; }
+  figure img { width: 100%; border-radius: 10px; border: 1px solid #e2e8f0; }
+  figcaption { font-size: 11px; color: #64748b; margin-top: 4px; font-family: ui-monospace, monospace; }
+  footer { margin-top: 34px; border-top: 1px solid #e2e8f0; padding-top: 12px; font-size: 11px; color: #94a3b8; }
+  @media print { body { padding: 0; } h2 { page-break-after: avoid; } .photos { page-break-inside: avoid; } }
+</style>
+</head>
+<body>
+  <p class="brand">TRACKNAIJA</p>
+  <h1>Incident Report — ${escapeHtml(dev.hostname || "Unnamed device")}</h1>
+  <p class="meta">Generated ${now} · Device ID ${escapeHtml(String(dev.deviceId || "").slice(0, 8))}</p>
+
+  <h2>Device</h2>
+  <table>${rows}</table>
+
+  <h2>Last known position</h2>
+  ${fixHtml}
+
+  <h2>Location timeline</h2>
+  <table><thead><tr><th>Time</th><th>Coordinates</th><th>Source</th><th>Accuracy</th></tr></thead><tbody>${fixRows}</tbody></table>
+
+  <h2>Security events</h2>
+  <table><thead><tr><th>Time</th><th>Event</th><th>Detail</th></tr></thead><tbody>${eventRows}</tbody></table>
+
+  <h2>Community sightings (BLE relay)</h2>
+  <table><thead><tr><th>Time</th><th>Coordinates</th><th>Closest device</th><th>Distance</th></tr></thead><tbody>${sightRows}</tbody></table>
+
+  <h2>Webcam evidence</h2>
+  <div class="photos">${evidenceHtml}</div>
+
+  <footer>
+    Prepared with TrackNaija. IMEI/serial and sighting data are intended for law-enforcement follow-up
+    (report the IMEI to the police for NPF/SCID network tracing). Device data is collected with owner
+    consent and handled in line with the NDPA 2023.
+  </footer>
+</body>
+</html>`;
   }
 
   /* ================= evidence gallery ================= */

@@ -66,11 +66,12 @@ app.whenReady().then(() => {
             hasDevicesTable: view('devices-table'),
             hasFinderBtn: view('btn-scan'),
             hasAlertsFeed: view('alerts-feed'),
-            hasMapView: view('view-map') && view('map-canvas') && view('btn-map-refresh') && view('btn-map-fit'),
+            hasMapView: view('view-map') && view('map-canvas') && view('btn-map-refresh') && view('btn-map-fit') && view('proximity-panel') && view('proximity-list'),
             leafletLoaded: typeof window.L === 'object' && typeof window.L.map === 'function',
             mapInitialized: !!document.querySelector('#map-canvas.leaflet-container'),
             mapActive: !!document.getElementById('view-map').classList.contains('active'),
             hasEvidenceModal: view('evidence-modal') && view('evidence-grid') && view('lightbox'),
+            reportBridge: typeof window.tracknaija.getDeviceDetail === 'function' && typeof window.tracknaija.saveReport === 'function',
             mapLegendItems: q('.legend-item'),
             statusChip: (document.getElementById('status-chip')||{}).textContent || '',
             bridge: typeof window.tracknaija === 'object' && typeof window.tracknaija.listDevices === 'function',
@@ -91,6 +92,7 @@ app.whenReady().then(() => {
           report.mapInitialized &&
           report.mapActive &&
           report.hasEvidenceModal &&
+          report.reportBridge &&
           report.mapLegendItems === 4 &&
           report.bridge &&
           report.ladderRows === 3;

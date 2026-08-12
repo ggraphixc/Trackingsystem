@@ -1066,6 +1066,21 @@ body {
   border-color: #ddd6fe;
 }
 
+.btn-icon.report {
+  color: var(--ink-muted);
+}
+
+.btn-icon.report:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+  color: var(--ink);
+}
+
+.btn-icon:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 /* ---------- map view ---------- */
 .map-toolbar {
   display: flex;
@@ -1229,6 +1244,65 @@ body {
   transform: rotate(45deg);
   box-shadow: 0 1px 4px rgb(30 41 59 / 0.35);
   box-sizing: border-box;
+}
+
+/* ---------- proximity panel ---------- */
+.proximity-card {
+  margin-top: 14px;
+}
+
+.proximity-list {
+  display: grid;
+  gap: 8px;
+}
+
+.proximity-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: #f8fafc;
+}
+
+.proximity-row .prox-icon {
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: var(--violet);
+  transform: rotate(45deg);
+  flex-shrink: 0;
+}
+
+.prox-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.prox-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.prox-title b {
+  color: var(--violet);
+}
+
+.prox-meta {
+  margin: 2px 0 0;
+  font-size: 11px;
+  color: var(--ink-faint);
+  font-family: "Fira Code", monospace;
+}
+
+.prox-dist {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ink);
+  font-family: "Fira Code", monospace;
+  white-space: nowrap;
 }
 
 /* ---------- evidence modal + gallery ---------- */

@@ -337,6 +337,41 @@ ipcMain.handle("agent:get-evidence", async (_e, deviceId) => {
   return { ok: Array.isArray(res) || !!res, evidence: list };
 });
 
+/**
+ * Everything the incident report needs, in one round-trip: device detail,
+ * fix history, sightings and evidence (each endpoint is array-shaped).
+ */
+ipcMain.handle("agent:get-device-detail", async (_e, deviceId) => {
+  if (!sync || !sync.configured || !deviceId) return { ok: false };
+  const [dev, fixes, evidence, sightings] = await Promise.all([
+    sync.getDevice(deviceId),
+    sync.getFixes(deviceId, 30),
+    sync.getEvidence(deviceId),
+    sync.getSightings(deviceId),
+  ]);
+  return {
+    ok: !!dev,
+    device: dev || null,
+    fixes: Array.isArray(fixes) ? fixes : (fixes && fixes.fixes) || [],
+    evidence: Array.isArray(evidence) ? evidence : (evidence && evidence.evidence) || [],
+    sightings: Array.isArray(sightings) ? sightings : (sightings && sightings.sightings) || [],
+  };
+});
+
+/** Write a generated report to Downloads and open it in the browser. */
+ipcMain.handle("agent:save-report", async (_e, html, filename) => {
+  try {
+    const safeName = String(filename || "tracknaija-report.html").replace(/[^a-zA-Z0-9._-]/g, "-");
+    const dir = app.getPath("downloads");
+    const outPath = path.join(dir, safeName);
+    fs.writeFileSync(outPath, String(html), "utf8");
+    await shell.openPath(outPath);
+    return { ok: true, path: outPath };
+  } catch (err) {
+    return { ok: false, error: err.message };
+  }
+});
+
 /** Full alert list for the dashboard feed (main.js pushes new ones live). */
 ipcMain.handle("agent:get-alerts", async () => {
   if (!sync || !sync.configured) return { ok: false, alerts: [] };
