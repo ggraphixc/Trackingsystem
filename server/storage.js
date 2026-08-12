@@ -220,9 +220,23 @@ function createPgStorage(url) {
     return nearestFixFile(store, lat, lng, maxMeters);
   }
 
+  // Retry the schema bootstrap: Neon poolers can hiccup on TLS handshake
+  // (ECONNRESET) or cold-start — a server that exits on the first transient
+  // failure would be down for no reason. Three attempts, backoff 1.5 s/3 s.
   const ready = (async () => {
-    await pool.query("CREATE TABLE IF NOT EXISTS dravex_kv (key text PRIMARY KEY, value jsonb NOT NULL)");
-    await ensureSpatial();
+    let lastErr;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        await pool.query("CREATE TABLE IF NOT EXISTS dravex_kv (key text PRIMARY KEY, value jsonb NOT NULL)");
+        await ensureSpatial();
+        return;
+      } catch (err) {
+        lastErr = err;
+        console.error(`Neon schema attempt ${attempt}/3 failed: ${err.message}`);
+        if (attempt < 3) await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
+    }
+    throw lastErr;
   })().catch((err) => {
     console.error("Failed to initialise Neon schema:", err.message);
     throw err;

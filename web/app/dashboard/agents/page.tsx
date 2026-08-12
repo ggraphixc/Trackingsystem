@@ -5,9 +5,14 @@ import Link from "next/link";
 import {
   DEFAULT_SERVER_URL,
   checkServerHealth,
+  getMe,
   getOwnerKey,
+  getSessionToken,
   getSettings,
   listDevices,
+  loginAccount,
+  logoutAccount,
+  registerAccount,
   registerPair,
   saveSettings,
   sendCommand,
@@ -15,7 +20,7 @@ import {
   setDeviceLost,
   setOwnerKey,
 } from "@/lib/api";
-import type { PairedDevice, ServerSettings } from "@/lib/api";
+import type { PairedDevice, ServerSettings, SessionUser } from "@/lib/api";
 import DeviceAlerts from "@/components/device-alerts";
 import {
   AlarmIcon,
@@ -29,6 +34,7 @@ import {
   RefreshIcon,
   ServerIcon,
   SignalIcon,
+  UserIcon,
   WifiIcon,
 } from "@/components/icons";
 import { Card, SectionTitle } from "@/components/ui";
@@ -62,12 +68,20 @@ export default function AgentsPage() {
   const [ownerKey, setOwnerKeyInput] = useState(getOwnerKey());
   const [ownerKeyBusy, setOwnerKeyBusy] = useState(false);
   const [ownerKeyNote, setOwnerKeyNote] = useState("");
+  const [user, setUser] = useState<SessionUser | null>(null);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountNote, setAccountNote] = useState("");
 
   const load = useCallback(async () => {
     setServer(await checkServerHealth());
     setDevices(await listDevices());
     const next = await getSettings();
     if (next) setSettings(next);
+    // Only probe the session when one is actually stored — otherwise the 8s
+    // poll fires a 401 every 8s and inflates the server's auth-anomaly count.
+    if (getSessionToken()) setUser(await getMe());
   }, []);
 
   const flash = (msg: string) => {
@@ -200,6 +214,112 @@ export default function AgentsPage() {
           <p className="text-2xl font-bold text-ink">{devices.length}</p>
           <p className="text-xs text-ink-muted">linked devices</p>
         </div>
+      </Card>
+
+      {/* Owner account — Phase 2.5 per-owner model */}
+      <Card className="mb-6 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-violet-50 text-violet-600">
+              <UserIcon className="h-5 w-5" />
+            </span>
+            <div>
+              <h3 className="text-sm font-semibold text-ink">Owner account</h3>
+              <p className="mt-1 max-w-lg text-sm text-ink-muted">
+                {user
+                  ? `Signed in as ${user.email} — you see only your own devices, and pairing codes you generate are claimed by you.`
+                  : "Create or log into an account so this dashboard is scoped to you. Without one, the dashboard behaves as the shared owner (legacy mode)."}
+              </p>
+            </div>
+          </div>
+          {user ? (
+            <span className="chip bg-emerald-50 text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
+              {user.deviceCount} device{user.deviceCount === 1 ? "" : "s"} · {user.role}
+            </span>
+          ) : (
+            <span className="chip bg-slate-100 text-slate-600">not signed in</span>
+          )}
+        </div>
+        {user ? (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <p className="flex-1 font-mono text-xs text-ink-faint">
+              account id {user.userId?.slice(0, 12)} · joined{" "}
+              {user.createdAt ? new Date(user.createdAt).toLocaleDateString("en-NG") : "—"}
+            </p>
+            <button
+              className="btn-ghost"
+              disabled={accountBusy}
+              onClick={async () => {
+                setAccountBusy(true);
+                await logoutAccount();
+                setUser(null);
+                setAccountBusy(false);
+                setAccountNote("Signed out — this browser no longer sends an account session.");
+                load();
+              }}
+            >
+              Sign out
+            </button>
+          </div>
+        ) : (
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <input
+              className="input min-w-48 flex-1"
+              type="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              aria-label="Account email"
+            />
+            <input
+              className="input min-w-48 flex-1"
+              type="password"
+              placeholder="Password (8+ characters)"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              aria-label="Account password"
+            />
+            <button
+              className="btn-secondary"
+              disabled={accountBusy || !email || !password}
+              onClick={async () => {
+                setAccountBusy(true);
+                const res = await registerAccount(email.trim(), password);
+                setAccountBusy(false);
+                if (res.ok) {
+                  setAccountNote(`Account created — signed in as ${email.trim()}.`);
+                  setEmail("");
+                  setPassword("");
+                  load();
+                } else {
+                  setAccountNote(res.error ?? "Could not create account.");
+                }
+              }}
+            >
+              Create account
+            </button>
+            <button
+              className="btn-ghost"
+              disabled={accountBusy || !email || !password}
+              onClick={async () => {
+                setAccountBusy(true);
+                const res = await loginAccount(email.trim(), password);
+                setAccountBusy(false);
+                if (res.ok) {
+                  setAccountNote(`Signed in as ${email.trim()}.`);
+                  setEmail("");
+                  setPassword("");
+                  load();
+                } else {
+                  setAccountNote(res.error ?? "Could not log in.");
+                }
+              }}
+            >
+              Log in
+            </button>
+          </div>
+        )}
+        {accountNote ? <p className="mt-2 text-xs text-ink-faint">{accountNote}</p> : null}
       </Card>
 
       {/* Server security — optional owner key for DRAVEX_OWNER_KEY auth */}

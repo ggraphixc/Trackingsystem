@@ -117,7 +117,7 @@ Device identity
 ├── staticBeacon  — Dravex Tag hardware (12-hex, NVS-persisted)
 ├── beacon id     — rotating daily: sha256(deviceId|day)[0..12] — privacy
 ├── recoveryCode  — owner-set PIN delivered with the `lost` command
-└── owner account — dashboard + owner key (DRAVEX_OWNER_KEY)
+└── owner account — session user (Phase 2.5) + legacy owner key (DRAVEX_OWNER_KEY)
 ```
 
 ---
@@ -253,6 +253,14 @@ owner marks lost ──► registry listing ──► buyer checks IMEI/serial �
   need the per-device token (issued at claim, rotatable via
   `POST /api/devices/:id/token`). Web dashboard (owner-key card) and desktop
   (Settings field) both carry the key; Android stores its token automatically.
+- **Per-owner accounts (Phase 2.5):** `register`/`login` issue session tokens
+  (scrypt + per-user salt, timing-safe compare, sessions invalidated on
+  logout). Sessions are owner credentials in **both** open and key modes;
+  each account sees only its own devices, cross-owner actions are `403`,
+  and pairing codes minted under a session claim to that user. This is the
+  path from the single `DRAVEX_OWNER_KEY` secret to the multi-owner model
+  (`User Account → Session → Devices`) — deployed behind the same API, so
+  existing single-owner deployments are untouched.
 - **Recovery code + ownership lock** — the app-level reactivation barrier.
 - **No stealth:** webcam only in lost mode with visible indicators; tracking
   only the owner's own devices with consent; no hidden capture (policy and law).
@@ -295,6 +303,18 @@ Zero-dependency Node HTTP server; dual-mode storage (JSON file ↔ Postgres when
 | `GET /api/alerts/latest`, `POST /api/alerts/read` | owner | alert feed |
 | `GET/POST /api/settings`, `POST /api/sms/test` | owner | SMS fallback config |
 | `GET /api/push/vapid-key`, `POST /api/push/(subscribe\|test)` | owner | web-push |
+| `POST /api/auth/register` | public | create owner account → `{userId, token}` (scrypt + per-user salt; 400 validation, 409 duplicate) |
+| `POST /api/auth/login` | public | session → `{userId, token}` (timing-safe compare) |
+| `POST /api/auth/logout` | session | invalidate the current session token |
+| `GET /api/auth/me` | session | session user + `deviceCount` |
+| `GET /api/admin/health` | owner | **Phase 2.5 observability** — devices connected/offline/lost, last-fix age, geolocate/sighting counters, command delivery rate, SMS/webhook failures, route errors, auth/rate-limit anomalies |
+
+> **Auth column — Phase 2.5 accounts:** "owner" = `DRAVEX_OWNER_KEY` **or** a
+> valid account session token (sessions work in both open and key modes).
+> With a session, device lists and device-scoped actions are scoped to that
+> user (`403` for another owner's device); without one, legacy single-owner
+> behavior applies. Device endpoints (`fixes`, `batch`, `events`, `commands`)
+> still require the per-device token.
 
 **Limits:** fixes 100/device, alerts 50 ring buffer, sightings 50/device,
 body cap 5 MB (evidence data-URLs), sighting alert throttle 30 min. Rate
@@ -320,10 +340,16 @@ dravex_points (Neon/PostGIS) { device_id, kind (fix|sighting), point geometry(Po
 stolen[]   { id, deviceId, type, imei, serialNumber, label, status(reported|resolved),
              reportedAt, resolvedAt }
 alerts[]   { id, type, deviceId, hostname, body, at, read }
-pairCodes  { code → deviceId }
+pairCodes  { code → { deviceId, ownerId|null } }   (ownerId = account that minted the code)
+users{}    { userId → { userId, email, passHash, salt, role, createdAt } }   (scrypt hashes)
+sessions{} { token → { userId, createdAt } }   (zero-dependency session store)
 pushSubscriptions[] { endpoint, keys, createdAt }
 settings   { ownerPhone, smsEnabled, smsLastSentAt, smsLastResult }
 ```
+
+devices[] also carry `ownerId` (the account that owns the device, null for
+legacy/key-claimed devices) and Phase 2.5 kept `verifiedAt`, `transferredAt`,
+`recoveryMessage`, `contactMessages[]` and `recoveryCode`.
 
 ---
 
@@ -395,8 +421,10 @@ Next.js 15 + Tailwind, static-export friendly, owner key in localStorage.
   **My Devices**, **Incidents** (reporting wizard → NPF channels), **Recovery**
   (list + per-device recovery view), **Device Check** (live registry, IMEI +
   serial), **Offline Recovery** (kit + action card), **Agents** (pairing, SMS
-  fallback, owner key), **Evidence**, **Impact** (CO₂e), **Track** (signal
-  ladder + commands).
+  fallback, owner key, **owner account** create/log-in card), **Evidence**,
+  **Impact** (CO₂e), **Track** (signal ladder + commands), **Service health**
+  (Phase 2.5 observability — `GET /api/admin/health` rendered as operational
+  tiles with an issue banner).
 - Components: `device-alerts`, `notification-bell` (Web Push), UI kit
   (Card/StatCard/ProgressBar/MapPreview…).
 - Design: `design-system/dravex/MASTER.md` tokens (trust blue `#2563EB`,
@@ -435,7 +463,8 @@ identity that survives battery swaps. Server resolves static tag beacons via
 |---|---|---|
 | **1 — MVP** | Desktop agent ladder/lost-mode/webcam; Android agent + beacon; sync server; web vault/reporting; registry + check; recovery mode | ✅ **Done** (this repo) |
 | **1.5 — hardened** | Optional auth (owner key + device tokens), ownership lock, post-flash IMEI check, tag firmware | ✅ Done |
-| **2 — fidelity** | Real Wi-Fi geolocation (server `/api/geolocate`, Google/Mozilla, cached) ✅ · PostGIS spatial mirror + `/api/nearest` ✅ · ownership transfer + verified lifecycle ✅ · finder contact relay ✅ · hardening (claim rate-limit, CORS allowlist, token-at-rest encryption) ✅ · email/webhook alert sink ✅ · Android boot re-arm + battery protection ✅ · macOS/Linux BLE watchers 🟡 · iOS companion build 🟡 · live SMS provider 🟡 | 🟡 In progress |
+| **2 — fidelity** | Real Wi-Fi geolocation (server `/api/geolocate`, Google/Mozilla, cached) ✅ · PostGIS spatial mirror + `/api/nearest` ✅ · ownership transfer + verified lifecycle ✅ · finder contact relay ✅ · hardening (claim rate-limit, CORS allowlist, token-at-rest encryption) ✅ · email/webhook alert sink ✅ · Android boot re-arm + battery protection ✅ · macOS/Linux BLE watchers ✅ code (CoreBluetooth/BlueZ helpers) · iOS companion build 🔜 · live SMS provider 🔜 | 🟡 On-device validation |
+| **2.5 — production readiness** | Theft simulation lab (`server/e2e-theft.js`, scenarios A/B/C + `docs/THEFT_LAB.md`) ✅ · formal QA matrix (`DRAVEX_TEST_MATRIX.md`) ✅ · observability (`GET /api/admin/health` + web Service-health page) ✅ · per-owner accounts (register/login/logout/me, sessions, device isolation, 403 cross-owner; `server/e2e-accounts.js`) ✅ | 🟡 Accounts live; real-device matrix in progress |
 | **3 — network** | Second-life marketplace + repair network; verified listings; monetization (Paystack/Flutterwave); public recovery stats | 🔜 |
 | **4 — partnerships** | NPF alignment, insurers, OEMs (power-off finding), NCC IMEI DMS, corporate fleets (B2B) | 🔜 |
 

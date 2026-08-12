@@ -43,7 +43,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { randomUUID, randomBytes } = require("crypto");
+const { randomUUID, randomBytes, scryptSync, timingSafeEqual } = require("crypto");
 const { createStorage } = require("./storage");
 const { getVapidKeys, notifyAll } = require("./push");
 const { maskPhone, normalizePhone, sendSms, smsStatus } = require("./sms");
@@ -71,6 +71,9 @@ const PORT = process.env.PORT || 4173;
 const HOST = process.env.HOST || "127.0.0.1";
 const FIX_HISTORY_LIMIT = 100;
 const MAX_BODY_BYTES = 5 * 1024 * 1024; // evidence photos are data: URLs — cap uploads
+// A fix after this many hours of silence raises a "reconnected" alert. The
+// theft lab overrides it to simulate a stolen phone surfacing online.
+const RECONNECT_GAP_HOURS = Number(process.env.RECONNECT_GAP_HOURS) || 12;
 
 /* ---------------- store ---------------- */
 
@@ -81,7 +84,34 @@ const DEFAULT_SETTINGS = {
   smsLastResult: null,
 };
 
-let store = { devices: {}, pairCodes: {}, alerts: [], pushSubscriptions: [], settings: DEFAULT_SETTINGS, stolen: [] };
+let store = {
+  devices: {},
+  pairCodes: {},
+  alerts: [],
+  pushSubscriptions: [],
+  settings: DEFAULT_SETTINGS,
+  stolen: [],
+  users: {}, // userId → { userId, email, passHash, salt, role, createdAt }
+  sessions: {}, // token → { userId, createdAt } (zero-dependency session store)
+};
+
+/*
+ * Operational metrics (Phase 2.5 observability) — in-memory counters bumped
+ * by every handler and surfaced at GET /api/admin/health. Not persisted:
+ * they describe the current process, which is what ops needs.
+ */
+const metrics = {
+  startedAt: new Date().toISOString(),
+  fixes: { received: 0 },
+  geolocate: { requests: 0, resolved: 0, unresolved: 0, limited: 0 },
+  sightings: { received: 0, stored: 0, deduped: 0, ghosts: 0, limited: 0 },
+  commands: { queued: 0, delivered: 0, acked: 0 },
+  sms: { attempts: 0, ok: 0, failed: 0 },
+  webhooks: { sent: 0, failed: 0 },
+  alerts: { raised: 0 },
+  errors: { route: 0 },
+  security: { denied401: 0, rateLimited: 0, registryChecks: 0, registryHits: 0 },
+};
 
 // Nigerian mobile operators by MNC (MCC 621). The Android agent fingerprints
 // the SIM as "<mcc><mnc>|<state>" — decode it so the dashboard can show the
@@ -134,6 +164,7 @@ function device(id) {
       imei: null, // phones only (laptops have serial numbers instead)
       platform: null,
       token: randomBytes(24).toString("hex"), // agent credential (claim returns it)
+      ownerId: null, // account that owns this device (Phase 2.5 accounts)
       staticBeacon: null, // Dravex Tag hardware: fixed 12-hex beacon id
       pairedAt: null,
       lastSeenAt: null,
@@ -160,7 +191,7 @@ function storeFix(dev, fix) {
   dev.events = dev.events || [];
   if (dev.lastSeenAt) {
     const gapHours = (Date.now() - new Date(dev.lastSeenAt).getTime()) / 3.6e6;
-    if (gapHours > 12) {
+    if (gapHours > RECONNECT_GAP_HOURS) {
       dev.reconnectedAt = now;
       dev.events.push({
         type: "reconnected",
@@ -204,6 +235,7 @@ function raiseAlert(type, dev, body, opts = {}) {
   };
   store.alerts.push(alert);
   if (store.alerts.length > 50) store.alerts = store.alerts.slice(-50);
+  metrics.alerts.raised++;
   saveStore();
   // Fire-and-forget: never block the request on push, SMS or webhook delivery.
   notifyAll(store, saveStore).catch(() => {});
@@ -223,7 +255,12 @@ function raiseAlert(type, dev, body, opts = {}) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ alert }),
       signal: AbortSignal.timeout(5000),
-    }).catch(() => {});
+    })
+      .then((r) => {
+        metrics.webhooks.sent++;
+        if (!r.ok) metrics.webhooks.failed++;
+      })
+      .catch(() => metrics.webhooks.failed++);
   }
 }
 
@@ -274,13 +311,16 @@ function smsNotify(store, alert) {
   if (s.smsWindow.count >= 10) return;
   s.smsWindow.count += 1;
   const prefix = alert.type === "sim_change" ? "SIM CHANGE" : "DEVICE ONLINE";
+  metrics.sms.attempts++;
   sendSms(s.ownerPhone, `[Dravex] ${prefix}: ${alert.body}`)
     .then((result) => {
       s.smsLastSentAt = new Date().toISOString();
       s.smsLastResult = result;
+      if (result && result.ok) metrics.sms.ok++;
+      else metrics.sms.failed++;
       saveStore();
     })
-    .catch(() => {});
+    .catch(() => metrics.sms.failed++);
 }
 
 function cors(req, res) {
@@ -299,6 +339,9 @@ function cors(req, res) {
 }
 
 function json(res, status, body) {
+  // Observability: every 401/429 is a signal (auth failures, rate-limit hits).
+  if (status === 401) metrics.security.denied401++;
+  if (status === 429) metrics.security.rateLimited++;
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
 }
@@ -324,14 +367,22 @@ function bearer(req) {
   return h.startsWith("Bearer ") ? h.slice(7).trim() : "";
 }
 function ownerOk(req) {
-  return !OWNER_KEY || bearer(req) === OWNER_KEY;
+  if (!OWNER_KEY) return true;
+  if (bearer(req) === OWNER_KEY) return true;
+  // Phase 2.5 accounts: a valid session token is ALSO an owner credential —
+  // per-owner dashboards keep working even while DRAVEX_OWNER_KEY is set.
+  return !!sessionUserId(req);
 }
 function deviceOk(req, dev) {
   if (!OWNER_KEY) return true;
   return !!dev.token && bearer(req) === dev.token;
 }
 function ownerOrDeviceOk(req, dev) {
-  return ownerOk(req) || deviceOk(req, dev);
+  // A present account session scopes strictly to that owner: the legacy
+  // open-mode/device-token bypass must not leak another owner's device to a
+  // logged-in user (enforced in open AND key modes alike).
+  if (sessionUserId(req)) return ownerOfDeviceOk(req, dev);
+  return ownerOfDeviceOk(req, dev) || deviceOk(req, dev);
 }
 
 /**
@@ -345,6 +396,72 @@ function anyDeviceOk(req) {
   const bearer = req.headers.authorization || "";
   const token = bearer.startsWith("Bearer ") ? bearer.slice(7).trim() : "";
   return !!token && Object.values(store.devices).some((d) => d.token === token);
+}
+
+/* ----------------- Phase 2.5: per-owner accounts ----------------- */
+
+/**
+ * User accounts + sessions — the multi-owner model. Backward compatible:
+ * DRAVEX_OWNER_KEY keeps working exactly as before, and in open mode
+ * (no key) everything stays open. When a session token is present, owner
+ * operations are scoped to that user's devices.
+ *
+ *   register/login → { token }   (Bearer <sessionToken> on later calls)
+ *   devices claimed under a session get ownerId = that user's id
+ *   GET /api/devices with a session returns ONLY that user's devices
+ *   device-scoped owner actions check ownership (403 for other owners)
+ */
+
+function hashPassword(password, salt) {
+  return scryptSync(String(password), salt, 64).toString("hex");
+}
+
+function newSession(userId) {
+  const token = randomBytes(32).toString("hex");
+  store.sessions[token] = { userId, createdAt: new Date().toISOString() };
+  // Bound the session map: a long-lived server must never grow it forever.
+  const keys = Object.keys(store.sessions);
+  if (keys.length > 5000) {
+    const sorted = keys.sort((a, b) =>
+      store.sessions[a].createdAt < store.sessions[b].createdAt ? -1 : 1,
+    );
+    for (const k of sorted.slice(0, keys.length - 5000)) delete store.sessions[k];
+  }
+  return token;
+}
+
+/** Resolve the session user from the Bearer token (or null). */
+function sessionUserId(req) {
+  const token = bearer(req);
+  if (!token) return null;
+  const s = store.sessions[token];
+  return s ? s.userId : null;
+}
+
+/**
+ * Ownership gate for a device. True when: open mode, owner key, or the
+ * session user owns the device. Sessions are strict: a user can only act on
+ * devices they claimed under their own account — legacy devices (ownerId
+ * null) are unowned and must be claimed by an account to be controlled.
+ */
+function ownerOfDeviceOk(req, dev) {
+  if (!ownerOk(req)) return false;
+  const uid = sessionUserId(req);
+  if (!uid) return true; // owner key (or open mode) sees all
+  return dev.ownerId === uid;
+}
+
+/** 401 when unauthenticated; 403 when authed but wrong owner. */
+function requireOwnerOf(req, res, dev) {
+  if (!ownerOk(req)) {
+    json(res, 401, { error: "Owner key or account session required." });
+    return false;
+  }
+  if (!ownerOfDeviceOk(req, dev)) {
+    json(res, 403, { error: "This device belongs to another owner." });
+    return false;
+  }
+  return true;
 }
 
 function readBody(req) {
@@ -503,6 +620,7 @@ const claimLimiter = makeLimiter(10);
 const sightingLimiter = makeLimiter(30);
 const contactLimiter = makeLimiter(5);
 const geoLimiter = makeLimiter(20); // /api/geolocate hits a PAID provider
+const authLimiter = makeLimiter(10); // register/login — public, brute-force + storage-DoS guard
 
 /* ---------------- routes ---------------- */
 
@@ -535,7 +653,10 @@ async function route(req, res) {
     if (cleaned.length < 6) {
       return json(res, 400, { error: "Enter a valid IMEI or serial number (at least 6 characters)." });
     }
-    return json(res, 200, registryVerdict(registryLookup(cleaned)));
+    metrics.security.registryChecks++;
+    const verdict = registryVerdict(registryLookup(cleaned));
+    if (verdict.found) metrics.security.registryHits++;
+    return json(res, 200, verdict);
   }
 
   // GET /api/alerts/latest?since=<iso> → { alerts: [...recent], unreadCount }
@@ -654,6 +775,7 @@ async function route(req, res) {
   // user's phone) — always answer 201 so nobody can probe which beacons exist.
   if (isPost && url.pathname === "/api/sightings") {
     if (sightingLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      metrics.sightings.limited++;
       return json(res, 429, { error: "Too many sightings — slow down." });
     }
     const body = await readBody(req);
@@ -661,8 +783,11 @@ async function route(req, res) {
     const lat = Number(body.lat);
     const lng = Number(body.lng);
     if (beacon && Number.isFinite(lat) && Number.isFinite(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180) {
+      metrics.sightings.received++;
       const dev = resolveBeacon(store, beacon);
-      if (dev) {
+      if (!dev) {
+        metrics.sightings.ghosts++; // unknown beacon swallowed (anti-probe)
+      } else {
         // Dedupe: the same scanner position for the same beacon within 5 min is
         // one sighting — a phone scanning on a duty cycle must not flood the
         // recovery view with identical reports.
@@ -674,6 +799,7 @@ async function route(req, res) {
           fresh.push({ key: sig, at: nowMs });
           if (fresh.length > 10) fresh = fresh.slice(-10);
           dev.lastSightingSignatures = fresh;
+          metrics.sightings.stored++;
           storeSighting(dev, {
             beacon,
             lat,
@@ -681,6 +807,8 @@ async function route(req, res) {
             accuracy: Number.isFinite(Number(body.accuracy)) ? Number(body.accuracy) : null,
             at: typeof body.at === "string" ? body.at : new Date().toISOString(),
           });
+        } else {
+          metrics.sightings.deduped++;
         }
       }
     }
@@ -697,7 +825,9 @@ async function route(req, res) {
   // 501 { source: "unresolved" } — the desktop must never fake a coordinate.
   if (isPost && url.pathname === "/api/geolocate") {
     if (!anyDeviceOk(req)) return json(res, 401, { error: "Owner key or device token required." });
+    metrics.geolocate.requests++;
     if (geoLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      metrics.geolocate.limited++;
       return json(res, 429, { error: "Too many geolocation requests — try again in a minute." });
     }
     const body = await readBody(req);
@@ -740,6 +870,7 @@ async function route(req, res) {
     }
 
     if (!process.env.GEOLOCATION_API_KEY) {
+      metrics.geolocate.unresolved++;
       return json(res, 501, {
         ok: false,
         source: "unresolved",
@@ -787,10 +918,12 @@ async function route(req, res) {
       }
     }
     if (!resolved) {
+      metrics.geolocate.unresolved++;
       return json(res, 502, { ok: false, source: "unresolved", error: "No geolocation provider answered for this fingerprint." });
     }
     // Cache the whole fingerprint so the next scan is instant and quota-free.
     for (const b of bssids) store.geoCache[b] = { ...resolved, at: new Date().toISOString() };
+    metrics.geolocate.resolved++;
     saveStore();
     return json(res, 200, { ok: true, source: "wifi_resolved", ...resolved, cached: false });
   }
@@ -811,15 +944,127 @@ async function route(req, res) {
     return json(res, 200, { nearest });
   }
 
-  // POST /api/pair/register { label } → { code, deviceId }
+  // POST /api/auth/register { email, password } → { ok, userId, token }
+  // Public but rate-limited (10/min/IP): registering fills the user store and
+  // scrypt hashing is CPU work — an attacker must not be able to loop it.
+  if (isPost && url.pathname === "/api/auth/register") {
+    if (authLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many registration attempts — try again in a minute." });
+    }
+    const body = await readBody(req);
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+      return json(res, 400, { error: "Enter a valid email address." });
+    }
+    if (password.length < 8) {
+      return json(res, 400, { error: "Password must be at least 8 characters." });
+    }
+    store.users = store.users || {};
+    if (Object.values(store.users).some((u) => u.email === email)) {
+      // 409 doubles as an account-existence oracle — acceptable for now; the
+      // 10/min/IP limit keeps it from being enumerable at scale.
+      return json(res, 409, { error: "An account with this email already exists — log in instead." });
+    }
+    const userId = randomUUID();
+    const salt = randomBytes(16).toString("hex");
+    // Every account is an independent owner with an isolated device list:
+    // devices claimed under a session belong to that user (ownerId).
+    store.users[userId] = { userId, email, passHash: hashPassword(password, salt), salt, role: "owner", createdAt: new Date().toISOString() };
+    const token = newSession(userId);
+    saveStore();
+    return json(res, 201, { ok: true, userId, token, email });
+  }
+
+  // POST /api/auth/login { email, password } → { ok, userId, token }
+  if (isPost && url.pathname === "/api/auth/login") {
+    if (authLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many login attempts — try again in a minute." });
+    }
+    const body = await readBody(req);
+    const email = String(body.email || "").trim().toLowerCase();
+    const password = String(body.password || "");
+    const user = Object.values(store.users || {}).find((u) => u.email === email);
+    if (!user) return json(res, 401, { error: "Unknown email or wrong password." });
+    const hash = hashPassword(password, user.salt);
+    const a = Buffer.from(hash, "hex");
+    const b = Buffer.from(user.passHash, "hex");
+    if (a.length !== b.length || !timingSafeEqual(a, b)) {
+      return json(res, 401, { error: "Unknown email or wrong password." });
+    }
+    const token = newSession(user.userId);
+    saveStore();
+    return json(res, 200, { ok: true, userId: user.userId, token, email: user.email });
+  }
+
+  // POST /api/auth/logout — invalidate the current session token.
+  if (isPost && url.pathname === "/api/auth/logout") {
+    const token = bearer(req);
+    if (token && store.sessions[token]) delete store.sessions[token];
+    saveStore();
+    return json(res, 200, { ok: true });
+  }
+
+  // GET /api/auth/me — who is this session? (counts their devices)
+  if (!isPost && url.pathname === "/api/auth/me") {
+    const uid = sessionUserId(req);
+    if (!uid || !store.users[uid]) return json(res, 401, { error: "Not signed in." });
+    const user = store.users[uid];
+    const deviceCount = Object.values(store.devices).filter((d) => d.ownerId === uid).length;
+    return json(res, 200, { ok: true, userId: uid, email: user.email, role: user.role, deviceCount, createdAt: user.createdAt });
+  }
+
+  // GET /api/admin/health — Phase 2.5 observability: what the service is
+  // doing right now, without checking every device manually. Owner-only.
+  if (!isPost && url.pathname === "/api/admin/health") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key or account session required." });
+    const now = Date.now();
+    const all = Object.values(store.devices);
+    const connected = all.filter((d) => d.lastSeenAt && now - new Date(d.lastSeenAt).getTime() < 5 * 60_000).length;
+    const ages = all
+      .map((d) => (d.lastFix ? now - new Date(d.lastFix.timestamp).getTime() : null))
+      .filter((x) => x !== null);
+    return json(res, 200, {
+      ok: true,
+      time: new Date().toISOString(),
+      uptimeS: Math.round((now - new Date(metrics.startedAt).getTime()) / 1000),
+      storage: { mode: storage.mode, describe: storage.describe() },
+      devices: {
+        paired: all.length,
+        connected, // seen within 5 min
+        offline: all.length - connected,
+        lost: all.filter((d) => d.lost).length,
+      },
+      lastFixAgeMin: ages.length ? { oldest: Math.round(Math.max(...ages) / 60000), newest: Math.round(Math.min(...ages) / 60000) } : null,
+      geolocate: metrics.geolocate,
+      sightings: metrics.sightings,
+      commands: {
+        queued: metrics.commands.queued,
+        delivered: metrics.commands.delivered,
+        acked: metrics.commands.acked,
+        deliveryRate: metrics.commands.queued
+          ? Math.round((metrics.commands.acked / metrics.commands.queued) * 100) + "%"
+          : "—",
+      },
+      sms: { attempts: sms.attempts, ok: sms.ok, failed: sms.failed, provider: smsStatus(store).provider },
+      webhooks: metrics.webhooks,
+      alerts: metrics.alerts,
+      errors: metrics.errors,
+      security: metrics.security,
+    });
+  }
+
+  // POST /api/pair/register { label } → { code, deviceId }. When called with
+  // an account session, the code (and the device claimed with it) belongs to
+  // that user; with the owner key it is the legacy shared owner.
   if (isPost && parts.join("/") === "api/pair/register") {
-    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key or account session required." });
     const body = await readBody(req);
     const deviceId = randomUUID();
     const code = body.label
       ? `DX-${body.label.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6)}-${Math.floor(1000 + Math.random() * 9000)}`
       : `DX-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
-    store.pairCodes[code] = deviceId;
+    store.pairCodes[code] = { deviceId, ownerId: sessionUserId(req) || null };
     device(deviceId);
     saveStore();
     return json(res, 201, { code, deviceId });
@@ -847,19 +1092,21 @@ async function route(req, res) {
       saveStore();
       return json(res, 429, { error: "This pairing code is locked — issue a new one." });
     }
-    const deviceId = store.pairCodes[code];
-    if (!deviceId) {
+    const entry = store.pairCodes[code];
+    if (!entry) {
       // Count failures against this code value (covers real brute-force AND
       // a typo'd code reaching its limit — either way, lock and move on).
       store.claimFails[code] = (store.claimFails[code] || 0) + 1;
       saveStore();
       return json(res, 404, { error: "Unknown or expired pairing code." });
     }
+    const deviceId = typeof entry === "string" ? entry : entry.deviceId;
     const dev = device(deviceId);
     dev.hostname = body.hostname || dev.hostname;
     dev.serialNumber = body.serialNumber || dev.serialNumber;
     dev.imei = body.imei || dev.imei;
     dev.platform = body.platform || dev.platform;
+    if (dev.ownerId === null && typeof entry === "object" && entry.ownerId) dev.ownerId = entry.ownerId;
     const sb = String(body.staticBeacon || "").toLowerCase();
     if (/^[0-9a-f]{12}$/.test(sb)) dev.staticBeacon = sb;
     dev.pairedAt = dev.pairedAt || new Date().toISOString();
@@ -870,10 +1117,14 @@ async function route(req, res) {
     return json(res, 200, { deviceId, token: dev.token });
   }
 
-  // GET /api/devices
+  // GET /api/devices — with an account session, ONLY that user's devices;
+  // without a session (owner key or open mode) everything is visible.
   if (!isPost && parts.join("/") === "api/devices") {
     if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
-    const list = Object.values(store.devices).map((d) => ({
+    const uid = sessionUserId(req);
+    const list = Object.values(store.devices)
+      .filter((d) => !uid || d.ownerId === uid)
+      .map((d) => ({
       deviceId: d.deviceId,
       hostname: d.hostname,
       serialNumber: d.serialNumber,
@@ -894,6 +1145,7 @@ async function route(req, res) {
       transferredAt: d.transferredAt || null,
       recoveryMessage: d.recoveryMessage || null,
       contactCount: (d.contactMessages || []).length,
+      ownerId: d.ownerId || null,
     }));
     return json(res, 200, list);
   }
@@ -909,6 +1161,7 @@ async function route(req, res) {
         if (!deviceOk(req, dev)) return json(res, 401, { error: "Device token required." });
         const body = await readBody(req);
         if (!body.fix) return json(res, 400, { error: "Missing fix." });
+        metrics.fixes.received++;
         storeFix(dev, body.fix);
         saveStore();
         return json(res, 201, { ok: true });
@@ -929,6 +1182,7 @@ async function route(req, res) {
         for (const item of items) {
           try {
             if (item && item.type === "fix" && item.fix) {
+              metrics.fixes.received++;
               storeFix(dev, item.fix);
               received++;
             } else if (item && item.type === "evidence" &&
@@ -976,7 +1230,7 @@ async function route(req, res) {
     // command so the phone agent arms/disarms its community beacon itself —
     // the beacon is only ever broadcast while lost (privacy-first).
     if (action === "lost" && isPost) {
-      if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+      if (!requireOwnerOf(req, res, dev)) return;
       const body = await readBody(req);
       dev.lost = !!body.lost;
       if (dev.lost) {
@@ -1032,7 +1286,7 @@ async function route(req, res) {
     // webcam photos are high-risk NDPA data and must never follow a device
     // into a stranger's hands.
     if (action === "transfer" && isPost) {
-      if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+      if (!requireOwnerOf(req, res, dev)) return;
       dev.lost = false;
       dev.recoveryCode = null;
       dev.verifiedAt = null;
@@ -1053,6 +1307,11 @@ async function route(req, res) {
       syncRegistry(dev);
       // Rotate the credential so only the new owner's agent can act.
       dev.token = randomBytes(24).toString("hex");
+      // Release ownership: the previous owner's account must lose access to a
+      // device it sold (the strict session filter + ownership gate key on
+      // ownerId). The buyer's account rebinds it when they claim the fresh
+      // code from a session-authed dashboard.
+      dev.ownerId = null;
       const code = `DX-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
       store.pairCodes[code] = dev.deviceId;
       // Disarm any pending lost/found commands so the next owner starts clean.
@@ -1066,7 +1325,7 @@ async function route(req, res) {
     // ("Verified → Recovered"). Resolves the registry and records a recovered
     // event; unlike mark-found it also pins verifiedAt for the recovery view.
     if (action === "verify" && isPost) {
-      if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+      if (!requireOwnerOf(req, res, dev)) return;
       dev.lost = false;
       dev.recoveryCode = null;
       dev.verifiedAt = new Date().toISOString();
@@ -1082,7 +1341,7 @@ async function route(req, res) {
     // — owner sets the one-way message shown to a good samaritan who finds
     // the device (never reveals the owner's identity to the public).
     if (action === "recovery-message" && req.method === "PUT") {
-      if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+      if (!requireOwnerOf(req, res, dev)) return;
       const body = await readBody(req);
       const message = String(body.message || "").trim().slice(0, 280);
       if (!message) return json(res, 400, { error: "Message is required." });
@@ -1154,12 +1413,13 @@ async function route(req, res) {
         const cmd = dev.commands.find((c) => c.id === parts[4]);
         if (!cmd) return json(res, 404, { error: "Command not found." });
         cmd.executedAt = new Date().toISOString();
+        metrics.commands.acked++;
         saveStore();
         return json(res, 200, { ok: true });
       }
 
       if (isPost) {
-        if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+        if (!requireOwnerOf(req, res, dev)) return;
         const body = await readBody(req);
         const type = ["lock", "alarm", "webcam"].includes(body.type) ? body.type : null;
         if (!type) return json(res, 400, { error: "Invalid command type." });
@@ -1169,6 +1429,7 @@ async function route(req, res) {
           createdAt: new Date().toISOString(),
           executedAt: null,
         });
+        metrics.commands.queued++;
         saveStore();
         return json(res, 201, { ok: true, id: dev.commands[dev.commands.length - 1].id });
       }
@@ -1180,6 +1441,7 @@ async function route(req, res) {
         const idx = dev.commands.findIndex((c) => c.id === after);
         pending = idx >= 0 ? pending.filter((c) => dev.commands.indexOf(c) > idx) : pending;
       }
+      metrics.commands.delivered += pending.length;
       return json(res, 200, pending);
     }
 
@@ -1187,7 +1449,7 @@ async function route(req, res) {
     // Needed when enabling auth on a store that has pre-auth devices (their
     // tokens were minted at creation but never delivered to the agent).
     if (action === "token" && isPost) {
-      if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+      if (!requireOwnerOf(req, res, dev)) return;
       dev.token = randomBytes(24).toString("hex");
       saveStore();
       return json(res, 200, { ok: true, token: dev.token });
@@ -1231,6 +1493,7 @@ async function route(req, res) {
 const server = http.createServer((req, res) => {
   route(req, res).catch((err) => {
     console.error("Route error:", err);
+    metrics.errors.route++;
     json(res, 500, { error: "Internal error." });
   });
 });
@@ -1239,12 +1502,20 @@ async function boot() {
   try {
     const loaded = await storage.load();
     if (loaded) {
+      // New keys (users/sessions/claimFails/geoCache) must default to their
+      // empty shapes when the persisted blob predates them — otherwise the
+      // first register/claim after an upgrade throws on `store.sessions[…]`.
       store = {
         devices: {},
         pairCodes: {},
         alerts: [],
         pushSubscriptions: [],
         settings: { ...DEFAULT_SETTINGS },
+        stolen: [],
+        users: {},
+        sessions: {},
+        claimFails: {},
+        geoCache: {},
         ...loaded,
       };
       store.settings = { ...DEFAULT_SETTINGS, ...(loaded.settings || {}) };

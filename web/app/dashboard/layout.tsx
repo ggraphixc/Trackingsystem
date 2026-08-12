@@ -13,6 +13,7 @@ import {
   MenuIcon,
   PlusIcon,
   SearchIcon,
+  ServerIcon,
   ShieldCheckIcon,
   WifiIcon,
   XMarkIcon,
@@ -30,6 +31,7 @@ const NAV = [
   { href: "/dashboard/agents", label: "Agents", icon: CrosshairIcon },
   { href: "/dashboard/evidence", label: "Evidence", icon: CameraIcon },
   { href: "/dashboard/impact", label: "Impact", icon: LeafIcon },
+  { href: "/dashboard/admin", label: "Service health", icon: ServerIcon },
 ];
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {

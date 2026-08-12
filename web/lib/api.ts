@@ -126,15 +126,15 @@ export function setOwnerKey(key: string): void {
   }
 }
 
-async function req<T>(path: string, body?: unknown): Promise<T | null> {
+async function req<T>(path: string, body?: unknown, method?: "POST" | "PUT"): Promise<T | null> {
   try {
     const headers: Record<string, string> = { "Content-Type": "application/json" };
-    // The dashboard is owner-side: attach the owner key when one is set.
-    // Public endpoints (/api/check, /api/health) ignore it.
-    const key = getOwnerKey();
-    if (key) headers.Authorization = `Bearer ${key}`;
+    // Account session first (Phase 2.5 per-owner model), owner key as the
+    // legacy fallback. Public endpoints (/api/check, /api/health) ignore it.
+    const auth = getSessionToken() || getOwnerKey();
+    if (auth) headers.Authorization = `Bearer ${auth}`;
     const res = await fetch(DEFAULT_SERVER_URL + path, {
-      method: body ? "POST" : "GET",
+      method: method ?? (body ? "POST" : "GET"),
       headers,
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(5000),
@@ -143,6 +143,28 @@ async function req<T>(path: string, body?: unknown): Promise<T | null> {
     return (await res.json()) as T;
   } catch {
     return null;
+  }
+}
+
+/**
+ * Like req but never swallows the HTTP status — for flows that must tell 409
+ * from 400 from 401 (account registration/login) or read a 2xx body.
+ */
+async function rawReq<T>(path: string, body?: unknown): Promise<{ status: number; json: T | null }> {
+  try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    const auth = getSessionToken() || getOwnerKey();
+    if (auth) headers.Authorization = `Bearer ${auth}`;
+    const res = await fetch(DEFAULT_SERVER_URL + path, {
+      method: body !== undefined ? "POST" : "GET",
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(5000),
+    });
+    const json = (await res.json().catch(() => null)) as T | null;
+    return { status: res.status, json };
+  } catch {
+    return { status: 0, json: null };
   }
 }
 
@@ -189,10 +211,15 @@ export async function setRecoveryMessage(
   message: string,
   contactPreference?: string,
 ): Promise<boolean> {
-  const res = await req<{ ok: boolean }>(`/api/devices/${deviceId}/recovery-message`, {
-    message,
-    contactPreference: contactPreference || undefined,
-  });
+  // The server route is PUT — req() sends POST by default, so pass the method.
+  const res = await req<{ ok: boolean }>(
+    `/api/devices/${deviceId}/recovery-message`,
+    {
+      message,
+      contactPreference: contactPreference || undefined,
+    },
+    "PUT",
+  );
   return !!res?.ok;
 }
 
@@ -315,4 +342,101 @@ export async function sendTestSms(): Promise<{
   error?: string;
 } | null> {
   return req("/api/sms/test", {});
+}
+
+/* ---------------- Phase 2.5: per-owner accounts ---------------- */
+
+const SESSION_STORAGE = "dravex_session_token";
+
+/** Session token for the account model. Empty string = not signed in. */
+export function getSessionToken(): string {
+  try {
+    return typeof localStorage === "undefined" ? "" : (localStorage.getItem(SESSION_STORAGE) || "");
+  } catch {
+    return "";
+  }
+}
+
+export function setSessionToken(token: string): void {
+  try {
+    if (token) localStorage.setItem(SESSION_STORAGE, token);
+    else localStorage.removeItem(SESSION_STORAGE);
+  } catch {
+    /* private mode — session simply won't persist */
+  }
+}
+
+export interface SessionUser {
+  ok?: boolean;
+  userId?: string;
+  email?: string;
+  role?: string;
+  deviceCount?: number;
+  createdAt?: string;
+}
+
+export interface AuthResult {
+  ok: boolean;
+  status: number;
+  error?: string;
+  user?: SessionUser;
+}
+
+/** Create an owner account — the first is the default owner, later accounts
+ * are separate owners with isolated device lists. Stores the session token. */
+export async function registerAccount(email: string, password: string): Promise<AuthResult> {
+  const res = await rawReq<SessionUser & { token?: string }>("/api/auth/register", { email, password });
+  if (res.status === 201 && res.json?.token) setSessionToken(res.json.token);
+  if (res.status === 201) return { ok: true, status: res.status, user: res.json ?? undefined };
+  return {
+    ok: false,
+    status: res.status,
+    error: (res.json as { error?: string } | null)?.error ?? "Server unreachable.",
+  };
+}
+
+export async function loginAccount(email: string, password: string): Promise<AuthResult> {
+  const res = await rawReq<SessionUser & { token?: string }>("/api/auth/login", { email, password });
+  if (res.status === 200 && res.json?.token) setSessionToken(res.json.token);
+  if (res.status === 200) return { ok: true, status: res.status, user: res.json ?? undefined };
+  return {
+    ok: false,
+    status: res.status,
+    error: (res.json as { error?: string } | null)?.error ?? "Server unreachable.",
+  };
+}
+
+export async function logoutAccount(): Promise<void> {
+  await rawReq("/api/auth/logout", {});
+  setSessionToken("");
+}
+
+/** Who is this browser's session? Null when signed out or server unreachable. */
+export async function getMe(): Promise<SessionUser | null> {
+  const res = await rawReq<SessionUser>("/api/auth/me");
+  return res.status === 200 ? res.json : null;
+}
+
+/* ---------------- Phase 2.5: observability ---------------- */
+
+export interface AdminHealth {
+  ok: boolean;
+  time: string;
+  uptimeS: number;
+  storage: { mode: string; describe: string };
+  devices: { paired: number; connected: number; offline: number; lost: number };
+  lastFixAgeMin: { oldest: number; newest: number } | null;
+  geolocate: { requests: number; resolved: number; unresolved: number; limited: number };
+  sightings: { received: number; stored: number; deduped: number; ghosts: number; limited: number };
+  commands: { queued: number; delivered: number; acked: number; deliveryRate: string };
+  sms: { attempts: number; ok: number; failed: number; provider: string };
+  webhooks: { sent: number; failed: number };
+  alerts: { raised: number };
+  errors: { route: number };
+  security: { denied401: number; rateLimited: number; registryChecks: number; registryHits: number };
+}
+
+/** Service-health snapshot: agents, geolocation, sightings, delivery rates… */
+export async function getAdminHealth(): Promise<AdminHealth | null> {
+  return req<AdminHealth>("/api/admin/health");
 }

@@ -66,6 +66,10 @@ class SyncClient {
         hostname: info.hostname,
         serialNumber: info.serialNumber,
         platform: info.platform,
+        // Phone identity + Dravex Tag identity ride along so the stolen
+        // registry is keyed by IMEI / static beacon from the very first claim.
+        imei: info.imei,
+        staticBeacon: info.staticBeacon,
       },
       { auth: "none" },
     );
@@ -195,6 +199,19 @@ class SyncClient {
       "POST",
       `/api/devices/${deviceId}/contact`,
       { message },
+      { auth: "none" },
+    );
+  }
+
+  /**
+   * Public stolen-registry check (IMEI/serial) — buyer protection, no auth.
+   * Returns the verdict { found, status, label, message } or null.
+   */
+  async checkRegistry(query) {
+    return this._req(
+      "GET",
+      `/api/check?q=${encodeURIComponent(String(query || "").trim())}`,
+      null,
       { auth: "none" },
     );
   }
