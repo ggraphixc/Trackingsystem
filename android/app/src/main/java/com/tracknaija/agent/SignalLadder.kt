@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.os.BatteryManager
+import android.os.Build
 import android.telephony.CellIdentityGsm
 import android.telephony.CellIdentityLte
 import android.telephony.CellIdentityNr
@@ -34,7 +35,9 @@ import kotlin.coroutines.resume
  *   3. Last known fix — honest answer when nothing fresh is available
  *
  * Every fix records accuracy, source and battery so the dashboard can show
- * an honest confidence score.
+ * an honest confidence score. It also records the nearby Wi-Fi BSSIDs and
+ * cell towers — the "network fingerprint" — so the dashboard can recognise
+ * where a device has been by its surroundings, not just its coordinates.
  */
 class SignalLadder(private val context: Context) {
 
@@ -55,12 +58,14 @@ class SignalLadder(private val context: Context) {
             put("accuracy", accuracy.toDouble())
             put("source", source)
             put("battery", battery)
-        put("timestamp", timestamp)
-        put("confidence", confidence)
-        put("networks", networks ?: JSONArray.NULL)
-        put("cells", cells ?: JSONArray.NULL)
+            put("timestamp", timestamp)
+            put("confidence", confidence)
+            // JSONObject.NULL (not JSONArray.NULL, which doesn't exist) keeps
+            // the JSON explicit when no fingerprint was captured.
+            put("networks", networks ?: JSONObject.NULL)
+            put("cells", cells ?: JSONObject.NULL)
+        }
     }
-}
 
     private val fused = LocationServices.getFusedLocationProviderClient(context)
 
@@ -181,8 +186,10 @@ class SignalLadder(private val context: Context) {
                     JSONObject().put("mcc", it.mcc).put("mnc", it.mnc)
                         .put("lac", it.lac).put("cid", it.cid)
                 }
-                is CellInfoNr -> ci.cellIdentity?.let {
-                    JSONObject().put("mcc", it.mcc).put("mnc", it.mnc)
+                is CellInfoNr -> (ci.cellIdentity as? CellIdentityNr)?.let {
+                    // NR exposes MCC/MNC as strings (they can exceed int range),
+                    // and its getCellIdentity() returns the base CellIdentity.
+                    JSONObject().put("mcc", it.mccString).put("mnc", it.mncString)
                         .put("tac", it.tac).put("cid", it.nci)
                 }
                 else -> null
@@ -191,11 +198,6 @@ class SignalLadder(private val context: Context) {
         }
         if (arr.length() == 0) null else arr
     }.getOrNull()
-
-    private data class FreshFix(val lat: Double, val lng: Double, val accuracy: Float)
-
-        null
-    }
 
     private data class FreshFix(val lat: Double, val lng: Double, val accuracy: Float)
 
