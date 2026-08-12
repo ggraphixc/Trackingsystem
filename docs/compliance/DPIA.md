@@ -11,7 +11,7 @@
 | Processing | Continuous device location (Wi-Fi/IP) + webcam evidence capture in lost mode |
 | Data subjects | Dravex users (device owners); incidentally, persons captured by webcam evidence |
 | Volume | [est. users/devices] |
-| Tech | Desktop agent (Electron), sync server / Appwrite (PostGIS), web dashboard |
+| Tech | Desktop agent (Electron), Dravex sync server (Postgres/PostGIS via Neon), web dashboard |
 
 ## 2. Necessity & proportionality
 

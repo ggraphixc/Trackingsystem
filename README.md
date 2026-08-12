@@ -4,10 +4,12 @@ A loss-prevention, recovery, and sustainability platform for **laptops, desktops
 See **[DRAVEX_NEXTGENE.md](DRAVEX_NEXTGENE.md)** — the master specification (architecture, anti-theft flows, API, schema, roadmap).
 Historical planning lives in **[PLAN.md](PLAN.md)**.
 
-> **Status:** Phase 1 MVP scaffold.
+> **Status:** Phase 1–1.5 built & deployed.
 > `desktop/` = the agent app **installed on laptops** (Windows/macOS/Linux).
 > `web/` = the **command center** (dashboard for owners/admins).
-> Data is currently local (agent JSON state / browser localStorage) — Phase 2 wires both to the Appwrite backend (PostGIS).
+> Agents sync to the **Dravex sync server** (`server/`), which stores in
+> **Postgres (Neon)** the moment `DATABASE_URL` is set; without it, the server
+> runs on a local JSON file for development.
 
 ## Repo layout
 
@@ -16,7 +18,7 @@ Historical planning lives in **[PLAN.md](PLAN.md)**.
 | `desktop/` | Electron tracking agent for **laptops/desktops** (Windows/macOS/Linux) — tray app, Wi-Fi/IP signal ladder, lost mode, webcam capture, remote lock/alarm, serial auto-capture |
 | `android/` | Android agent app for **phones** — GPS + Wi-Fi/cell signal ladder, foreground tracking service, lost mode, webcam evidence, remote alarm |
 | `ios/` | iOS **companion** — last-known-location reporting + Apple Find My guidance + police report (iOS blocks third-party background tracking) |
-| `server/` | Zero-dependency sync server — device pairing, fix/evidence sync, remote-command queue (swap for Appwrite in Phase 3) |
+| `server/` | **Canonical backend** — zero-dependency Node API: device pairing, fix/evidence sync, remote commands, stolen-device registry + `/api/check`, alerts (push/SMS), optional auth (`DRAVEX_OWNER_KEY` + device tokens). Postgres/PostGIS via Neon |
 | `web/` | Next.js command center — device vault, lost-device reporting hub → stolen registry, Device Check for buyers (IMEI/serial), Recovery Mode, Agents page, Evidence gallery |
 | `design-system/dravex/` | Generated design tokens (palette, typography, style rules) |
 | `PLAN.md` | Full product + technical plan |
@@ -61,8 +63,8 @@ Production build: `npm run build && npm start`
 
 ## Roadmap
 
-Phase 1 (here) → Phase 2 live sync + remote commands from the dashboard → Phase 3 community registry & marketplace → Phase 4 partnerships.
-Details, pricing, compliance and risk notes: **[PLAN.md](PLAN.md)**.
+Phase 1 MVP ✅ → **Phase 1.5 hardened ✅** (auth, ownership lock, Device Check, tag firmware) → **Phase 2 fidelity** (real Wi-Fi geolocation lookup, PostGIS spatial queries, iOS companion build, live SMS) → Phase 3 network (second-life marketplace, repair network) → Phase 4 partnerships.
+Details, pricing, compliance and risk notes: **[DRAVEX_NEXTGENE.md](DRAVEX_NEXTGENE.md)** (§21 phased plan). Historical planning: **[PLAN.md](PLAN.md)**.
 
 ## Legal / compliance notice
 

@@ -10,7 +10,7 @@ don't).
   recorded on every fix
 - **Foreground tracking service:** battery-aware polling (5 min idle / 10 min low battery / 20 s
   lost mode), Android 14+ `FOREGROUND_SERVICE_LOCATION` declared
-- **Link to dashboard:** same pairing-code flow as the desktop agent (sync server / Appwrite)
+- **Link to dashboard:** same pairing-code flow as the desktop agent (Dravex sync server, `server/`)
 - **Remote commands:** loud alarm + **webcam evidence capture** (CameraX) issued from the dashboard
 - **Lost mode:** fast polling + webcam armed
 

@@ -9,8 +9,8 @@ The **tracking agent** that installs on laptops/desktops (Windows, macOS, Linux)
 - Sits in the system tray, optional auto-start after reboot
 - Captures the machine's **serial number** — the key that links it to the web dashboard vault
 
-> Phase 1 scaffold: everything runs locally (JSON state in the app data dir). Phase 2 wires
-> fixes/evidence to the Appwrite backend so the web dashboard can show them.
+> Architecture per **[DRAVEX_NEXTGENE.md](../DRAVEX_NEXTGENE.md)**: the agent syncs fixes/
+> evidence to the **Dravex sync server** (`server/` — Postgres via Neon in production), which the web dashboard reads.
 
 ## Run
 

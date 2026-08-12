@@ -43,7 +43,7 @@ We do not sell personal data. We share:
   general location area — **never** the owner's identity or precise live location.
 - **Law enforcement:** on lawful request (police report, court order), we may share evidence and
   device data relevant to a reported theft.
-- **Service providers:** hosting (e.g. Appwrite Cloud), push, and payment processors, under data
+- **Service providers:** hosting (Dravex sync server — Postgres/PostGIS via Neon), push, and payment processors, under data
   processing agreements, Nigeria-resident where available.
 
 ## 5. Data subject rights (NDPA §34–39)

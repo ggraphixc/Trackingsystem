@@ -16,7 +16,7 @@ Checklist for going to market legally in Nigeria. Track status as you complete e
 - [ ] **Terms of Service**
 - [ ] **DPIA** completed & signed (DPIA.md)
 - [ ] **Record of Processing Activities (ROPA)** — include all processing, bases, retention
-- [ ] Data processing agreements with all vendors (Appwrite, maps, push, payments)
+- [ ] Data processing agreements with all vendors (Dravex sync server hosting/Neon, maps, push, payments)
 - [ ] **Breach response plan** (internal doc) + NDPC notification template
 
 ## C. Engineering
