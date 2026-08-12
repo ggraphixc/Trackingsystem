@@ -48,14 +48,40 @@ Steps:
 
 ## 3. Web dashboard — Vercel
 
-1. Push `web/` to GitHub (or use Vercel's CLI: `vercel --prod` from `web/`).
-2. Set the build-time env var on Vercel:
-   - `NEXT_PUBLIC_SYNC_SERVER_URL` = `https://<name>.onrender.com`
-3. Deploy. Vercel gives you `https://<project>.vercel.app`.
+1. Push `web/` to GitHub (the repo root also contains `server/` — see step 2).
+2. Create a Vercel project and set the **Root Directory to `web`** (Vercel →
+   Settings → Root Directory → `web`; this matters in a monorepo — the default
+   root would try to build the wrong folder).
+3. Set the build-time env var on Vercel (optional — see fallback below):
+   - `NEXT_PUBLIC_SYNC_SERVER_URL` = `https://tracknaija.onrender.com`
+4. Deploy. Vercel gives you `https://<project>.vercel.app`.
 
-The dashboard reads `NEXT_PUBLIC_SYNC_SERVER_URL` (falls back to `http://localhost:4173`)
-and writes it to IndexedDB for the service worker, so push notifications fetch alerts
-from the deployed server automatically.
+The dashboard reads `NEXT_PUBLIC_SYNC_SERVER_URL` and writes it to IndexedDB for the
+service worker, so push notifications fetch alerts from the deployed server
+automatically. **Production fallback:** if the env var is missing, production
+builds default to `https://tracknaija.onrender.com` (local dev stays on
+`http://localhost:4173`) — so a deploy can never silently point at localhost.
+
+**CLI route:** `cd web && npx vercel --prod` (first run: `npx vercel login`).
+
+## 3.5 Locking down — CORS allowlist + owner key (do AFTER the web is live)
+
+1. **CORS_ORIGIN** — once the dashboard is deployed, set this on the sync server:
+   - value: the dashboard origin, e.g. `https://dravex-dashboard.vercel.app`
+     (scheme + host, **no trailing slash**). Cross-origin calls from any other
+     origin are then rejected; the default `*` is dev-only.
+   - Render: Dashboard → your sync-server service → Environment → add
+     `CORS_ORIGIN` → Save → redeploy. Locally: uncomment `CORS_ORIGIN=` in
+     `server/.env`.
+   - Verify: `curl -i https://tracknaija.onrender.com/api/health -H "Origin: https://evil.example"`
+     must NOT return an `Access-Control-Allow-Origin` header.
+2. **DRAVEX_OWNER_KEY** — lock owner endpoints (devices, mark-lost, alerts,
+   admin health) behind a shared secret. Generate: `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`.
+   Set it on Render the same way; owner agents/dashboards then send
+   `Authorization: Bearer <key>`. Account sessions also unlock owner endpoints
+   (per-owner model) — the key is the operator-level backstop.
+3. Re-verify: `curl -s https://tracknaija.onrender.com/api/admin/health` → `401`
+   without the key, `200` with it.
 
 ## 4. SMS fallback alerts — Twilio or Termii
 

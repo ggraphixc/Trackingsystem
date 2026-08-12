@@ -8,7 +8,11 @@
  */
 
 const SERVER_URL_ENV =
-  (typeof process !== "undefined" && process.env.NEXT_PUBLIC_SYNC_SERVER_URL) ||
+  (typeof process !== "undefined" &&
+    (process.env.NEXT_PUBLIC_SYNC_SERVER_URL ||
+      // Production fallback: a Vercel deploy without the env var must still
+      // reach the LIVE API instead of silently breaking against localhost.
+      (process.env.NODE_ENV === "production" ? "https://tracknaija.onrender.com" : ""))) ||
   "http://localhost:4173";
 // Trailing slash would produce "//api/…" paths that the sync server's URL
 // parser misreads as a network-path reference — strip it once here.
