@@ -1,0 +1,79 @@
+# TrackNaija Android agent — build the APK automatically.
+#
+#   * Every push to `main` (and every pull request): compile the debug APK
+#     and upload it as a workflow artifact. If the Kotlin/Beacon code breaks
+#     the build, the run fails and the PR shows it — the same safety net that
+#     caught the CellIdentityNr/BLE compile errors during development.
+#   * Every tag push (`v*`): additionally publish the APK to a GitHub
+#     Release so installers live on Releases, not in the repo.
+#
+# Build matrix details:
+#   - JDK 21 (Temurin) — matches the JDK the project builds with locally.
+#   - AGP 8.7.3 needs JDK 17+; Gradle 8.11.1 comes from the repo wrapper.
+#   - Android SDK platform 35 + build-tools 35.0.0 installed explicitly so
+#     the build never depends on AGP's auto-download.
+name: Android APK build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write # for the GitHub Release step on tags
+
+jobs:
+  build:
+    name: Build debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK (cmdline-tools + licenses)
+        uses: android-actions/setup-android@v3
+
+      - name: Install SDK platform 35 + build-tools
+        run: |
+          sdkmanager --install "platforms;android-35" "build-tools;35.0.0" "platform-tools"
+          yes | sdkmanager --licenses
+
+      - name: Set up Gradle (cached via gradle/actions)
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build debug APK
+        working-directory: android
+        run: ./gradlew assembleDebug
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tracknaija-agent-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+
+  # Tag push (v0.2.0, v1.0.0, …) → attach the APK to a GitHub Release.
+  release:
+    name: Publish APK to GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download built APK
+        uses: actions/download-artifact@v4
+        with:
+          name: tracknaija-agent-debug-apk
+          path: apk
+
+      - name: Create/update GitHub Release with the APK
+        uses: softprops/action-gh-release@v2
+        with:
+          files: apk/app-debug.apk
+          generate_release_notes: true
