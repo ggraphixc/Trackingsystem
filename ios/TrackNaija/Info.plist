@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleDisplayName</key>
-    <string>TrackNaija</string>
+    <string>Dravex</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -34,7 +34,7 @@
 
     <!-- Location: one-shot when-in-use fix -->
     <key>NSLocationWhenInUseUsageDescription</key>
-    <string>TrackNaija uses your location to report this iPhone's last-known position to your dashboard when you tap Report location.</string>
+    <string>Dravex uses your location to report this iPhone's last-known position to your dashboard when you tap Report location.</string>
 
     <!-- Dev: allow http:// to the local sync server (LAN / localhost) -->
     <key>NSAppTransportSecurity</key>
@@ -45,6 +45,6 @@
 
     <!-- iOS 14+ local-network permission prompt for LAN servers -->
     <key>NSLocalNetworkUsageDescription</key>
-    <string>TrackNaija connects to your sync server on your local network to send location fixes.</string>
+    <string>Dravex connects to your sync server on your local network to send location fixes.</string>
 </dict>
 </plist>

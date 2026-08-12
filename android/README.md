@@ -1,6 +1,6 @@
-# TrackNaija Android Agent
+# Dravex Android Agent
 
-The **phone agent** for TrackNaija — tracks a phone's location and captures webcam evidence,
+The **phone agent** for Dravex — tracks a phone's location and captures webcam evidence,
 mirroring the desktop agent but with **GPS added to the signal ladder** (phones have GPS; laptops
 don't).
 
@@ -50,4 +50,4 @@ Requirements: JDK 17+, Android SDK (platform-35 + build-tools 35.0.0), Gradle 8.
     gradle assembleDebug      # or: ./gradlew assembleDebug
 
 Output: `app/build/outputs/apk/debug/app-debug.apk` (sideloadable debug APK).
-A prebuilt copy lives in `dist/TrackNaija-Agent-0.1.0-debug.apk`.
+A prebuilt copy lives in `dist/Dravex-Agent-0.1.0-debug.apk`.

@@ -1,5 +1,5 @@
 /**
- * TrackNaija SMS alerts — zero-dependency provider module.
+ * Dravex SMS alerts — zero-dependency provider module.
  *
  * The sync server texts the owner when a stolen device surfaces online or its
  * SIM changes — the fallback channel for owners with no data or Wi-Fi, and
@@ -123,7 +123,7 @@ async function sendSms(to, message) {
   const provider = smsProvider();
   if (provider === "twilio") return sendTwilio(to, message);
   if (provider === "termii") return sendTermii(to, message);
-  console.log(`[TrackNaija SMS:log] to=${to} — ${message}`);
+  console.log(`[Dravex SMS:log] to=${to} — ${message}`);
   return { ok: true, mode: "log", messageId: "log" };
 }
 

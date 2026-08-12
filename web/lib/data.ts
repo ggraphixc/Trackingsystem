@@ -134,10 +134,6 @@ export const SEED_INCIDENTS: Incident[] = [
   },
 ];
 
-export const STOLEN_SERIAL_DB: Record<string, { brand: string; model: string; status: "clean" | "reported_stolen"; reportedAt?: string }> = {
-  "HP840G9-CN4487X": { brand: "HP", model: "EliteBook 840 G9", status: "reported_stolen", reportedAt: "2026-08-01" },
-};
-
 export function formatDate(iso: string): string {
   return new Date(iso).toLocaleString("en-NG", {
     day: "numeric",

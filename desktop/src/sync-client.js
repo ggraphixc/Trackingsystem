@@ -1,5 +1,5 @@
 /**
- * TrackNaija SyncClient — talks to the sync server (or Appwrite in Phase 2)
+ * Dravex SyncClient — talks to the sync server (or Appwrite in Phase 2)
  * from the Electron main process. Uses the global fetch (Node 18+/Electron 33).
  */
 class SyncClient {

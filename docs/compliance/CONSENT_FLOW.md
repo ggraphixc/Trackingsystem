@@ -1,4 +1,4 @@
-# TrackNaija Consent Flow (Design Spec)
+# Dravex Consent Flow (Design Spec)
 
 Goal: **explicit, granular, freely given, revocable** consent (NDPA §24 + GAID) with UI copy ready
 to paste into both apps. Consent is never bundled with "accept all" dark patterns.
@@ -14,20 +14,20 @@ to paste into both apps. Consent is never bundled with "accept all" dark pattern
 
 ## 2. Agent (Electron) — first-run onboarding
 
-**Screen 1 — What TrackNaija does** (title, short bullets, "Continue")
-> TrackNaija protects your laptop if it's lost or stolen. It never runs hidden. You stay in control.
+**Screen 1 — What Dravex does** (title, short bullets, "Continue")
+> Dravex protects your laptop if it's lost or stolen. It never runs hidden. You stay in control.
 
 **Screen 2 — Location consent** (radio: Yes / Not now) + checkbox for details
-> "Allow TrackNaija to see this device's location using Wi-Fi and IP signals? This powers
+> "Allow Dravex to see this device's location using Wi-Fi and IP signals? This powers
 > find-my-laptop. You can stop this any time in the agent."
-> [ ] "I understand location is sent to the TrackNaija dashboard when this device is linked."
+> [ ] "I understand location is sent to the Dravex dashboard when this device is linked."
 
 **Screen 3 — Webcam consent** (radio: Yes, in lost mode only / Yes, allow manual captures too / No)
-> "TrackNaija may open the webcam to capture evidence if the device is reported lost, or when you
+> "Dravex may open the webcam to capture evidence if the device is reported lost, or when you
 > tap 'Capture webcam'. A visible indicator shows whenever the camera is active."
 
 **Screen 4 — Auto-start** (checkbox, default off)
-> "Start TrackNaija when this computer starts, so protection re-arms after a reboot? You can change
+> "Start Dravex when this computer starts, so protection re-arms after a reboot? You can change
 > this later in Settings."
 
 **Screen 5 — Confirm** (summary of choices + "I agree" button → stores consent record)
@@ -36,7 +36,7 @@ to paste into both apps. Consent is never bundled with "accept all" dark pattern
 ## 3. Dashboard (web) — sign-up consent
 
 Inline checkboxes (no pre-checked boxes):
-- [ ] "I consent to TrackNaija processing my device registry and incident data to provide the
+- [ ] "I consent to Dravex processing my device registry and incident data to provide the
       service (required)."
 - [ ] "I consent to location processing for linked devices (required for tracking features;
       revocable)."

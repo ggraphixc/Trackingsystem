@@ -1,11 +1,11 @@
-# TrackNaija Privacy Policy (Draft)
+# Dravex Privacy Policy (Draft)
 
 > **Status:** Draft for legal review · **Law:** Nigeria Data Protection Act 2023 (NDPA 2023) + NDPC General Application and Implementation Directive (GAID)
 > This is a starting point for counsel — not a substitute for legal advice.
 
 ## 1. Who we are (data controller)
 
-TrackNaija ("we", "us") is the data controller for the TrackNaija platform, which comprises a
+Dravex ("we", "us") is the data controller for the Dravex platform, which comprises a
 desktop agent (Windows/macOS/Linux), a web dashboard, and a sync service.
 
 - Contact / DPO: [DPO email + address to be inserted]

@@ -147,7 +147,7 @@ function startAlertPolling() {
       if (alert.type === "sim_change") {
         try {
           const n = new Notification({
-            title: `TrackNaija — ${alert.hostname}`,
+            title: `Dravex — ${alert.hostname}`,
             body: alert.body,
           });
           n.onclick = () => openAgent();
@@ -284,7 +284,9 @@ ipcMain.handle("agent:list-devices", async () => {
 ipcMain.handle("agent:set-device-lost", async (_e, deviceId, lost) => {
   if (!sync || !sync.configured) return { ok: false };
   const res = await sync.setDeviceLost(deviceId, !!lost);
-  return { ok: !!res };
+  // Pass the recovery code through: the owner needs it to unlock the device's
+  // app-level ownership check if the phone comes back to them.
+  return { ok: !!res, recoveryCode: res ? res.recoveryCode : null };
 });
 
 /** Community sightings for one device (newest first). */
@@ -297,7 +299,7 @@ ipcMain.handle("agent:get-sightings", async (_e, deviceId) => {
 });
 
 /**
- * BLE sweep: this laptop's own radio listens for TrackNaija beacons.
+ * BLE sweep: this laptop's own radio listens for Dravex beacons.
  * Every heard beacon is reported to the sync server as a sighting with THIS
  * machine's position (fresh fix when possible, else last known) — the laptop
  * joins the community relay alongside phones.
@@ -385,9 +387,9 @@ ipcMain.handle("agent:set-report-info", (_e, info) => {
 /** Write a generated report to Downloads and open it in the browser. */
 ipcMain.handle("agent:save-report", async (_e, html, filename) => {
   try {
-    // The renderer always prefixes with "TrackNaija-Report-", so reserved
+    // The renderer always prefixes with "Dravex-Report-", so reserved
   // Windows device names (CON/NUL/…) can never be the whole filename.
-  const safeName = String(filename || "tracknaija-report.html").replace(/[^a-zA-Z0-9._-]/g, "-");
+  const safeName = String(filename || "dravex-report.html").replace(/[^a-zA-Z0-9._-]/g, "-");
     const dir = app.getPath("downloads");
     const outPath = path.join(dir, safeName);
     fs.writeFileSync(outPath, String(html), "utf8");
@@ -451,8 +453,27 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
-    stateFile = path.join(app.getPath("userData"), "agent-state.json");
-    vaultFile = path.join(app.getPath("userData"), "offline-vault.json");
+    // Dravex rebrand: on first run after the rename, carry over pairing state
+    // and the offline vault from the old "tracknaija-agent" userData dir so
+    // already-linked machines don't silently un-pair or lose evidence.
+    const userDataDir = app.getPath("userData");
+    try {
+      if (!fs.existsSync(userDataDir)) {
+        const legacy = path.join(app.getPath("appData"), "tracknaija-agent");
+        if (fs.existsSync(legacy)) {
+          fs.mkdirSync(userDataDir, { recursive: true });
+          for (const f of ["agent-state.json", "offline-vault.json"]) {
+            const src = path.join(legacy, f);
+            if (fs.existsSync(src)) fs.copyFileSync(src, path.join(userDataDir, f));
+          }
+          console.log("Migrated agent state from tracknaija-agent →", userDataDir);
+        }
+      }
+    } catch (err) {
+      console.error("State migration failed:", err.message);
+    }
+    stateFile = path.join(userDataDir, "agent-state.json");
+    vaultFile = path.join(userDataDir, "offline-vault.json");
     vault = new OfflineVault(vaultFile);
 
     const state = loadState();

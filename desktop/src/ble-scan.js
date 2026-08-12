@@ -4,7 +4,7 @@ const path = require("path");
 /**
  * Desktop BLE scanner — the laptop becomes a community finder.
  *
- * The desktop agent's own Bluetooth radio listens for TrackNaija beacons
+ * The desktop agent's own Bluetooth radio listens for Dravex beacons
  * (service UUID 0000fffa…) — the same rotating beacon IDs the Android agent
  * broadcasts while a phone is marked LOST. When the owner walks near their
  * stolen phone (or any lost device), this laptop HEARS it and reports a

@@ -1,9 +1,9 @@
 {
-  "name": "tracknaija-agent",
+  "name": "dravex-agent",
   "version": "0.2.0",
-  "description": "TrackNaija desktop agent — installs on laptops/desktops to report Wi-Fi/IP location, capture webcam in lost mode, support remote lock/alarm, and sync offline evidence via the offline vault",
+  "description": "Dravex desktop agent — installs on laptops/desktops to report Wi-Fi/IP location, capture webcam in lost mode, support remote lock/alarm, and sync offline evidence via the offline vault",
   "main": "src/main.js",
-  "author": "TrackNaija",
+  "author": "Dravex",
   "license": "MIT",
   "scripts": {
     "icon": "node scripts/generate-app-icon.js",
@@ -16,8 +16,8 @@
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8"
   },  "build": {
-    "appId": "com.tracknaija.agent",
-    "productName": "TrackNaija Agent",
+    "appId": "com.dravex.agent",
+    "productName": "Dravex Agent",
     "files": ["src/**/*", "assets/**/*"],
     "directories": { "buildResources": "build" },
     "icon": "build/icon.png",

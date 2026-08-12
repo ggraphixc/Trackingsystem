@@ -9,7 +9,7 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        // TrackNaija design system — "Trust & Authority"
+        // Dravex design system — "Trust & Authority"
         primary: {
           DEFAULT: "#2563EB",
           dark: "#1D4ED8",

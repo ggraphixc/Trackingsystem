@@ -1,4 +1,4 @@
-package com.tracknaija.agent
+package com.dravex.agent
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -182,7 +182,7 @@ class TrackingService : Service() {
             // — a privacy-first design. A phone is never silently findable; the
             // owner arms the beacon (app switch, or the dashboard "Mark lost"
             // button which queues a `lost` command handled below). While armed
-            // it broadcasts even with no SIM/data, so other TrackNaija phones
+            // it broadcasts even with no SIM/data, so other Dravex phones
             // can report sightings.
             if (state.lostMode) {
                 state.deviceId?.let { Beacon.startAdvertising(this@TrackingService, it) }
@@ -319,8 +319,20 @@ class TrackingService : Service() {
                         // the community beacon on the phone itself (works even
                         // after the phone left the owner's hands, as long as the
                         // agent service is still alive). "found" disarms it.
-                        "lost" -> state.lostMode = true
-                        "found" -> state.lostMode = false
+                        "lost" -> {
+                            state.lostMode = true
+                            // Carry the owner's recovery code into the app so
+                            // the ownership-verification lock can arm on next
+                            // open (and after app restarts).
+                            cmd.optJSONObject("payload")
+                                ?.optString("recoveryCode")
+                                ?.takeIf { it.isNotBlank() }
+                                ?.let { state.recoveryCode = it }
+                        }
+                        "found" -> {
+                            state.lostMode = false
+                            state.recoveryCode = null
+                        }
                         "alarm" -> CommandHandler.playAlarm(this@TrackingService)
                         "webcam" -> CommandHandler.captureWebcam(this@TrackingService) { dataUrl ->
                             if (dataUrl != null) {
@@ -359,7 +371,7 @@ class TrackingService : Service() {
     }
 
     companion object {
-        private const val CHANNEL_ID = "tracknaija_tracking"
+        private const val CHANNEL_ID = "dravex_tracking"
         private const val NOTIF_ID = 1
 
         /** True while the service is running — lets the UI show real state. */

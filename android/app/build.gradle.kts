@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "com.tracknaija.agent"
+    namespace = "com.dravex.agent"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "com.tracknaija.agent"
+        applicationId = "com.dravex.agent"
         minSdk = 26
         targetSdk = 35
         versionCode = 2

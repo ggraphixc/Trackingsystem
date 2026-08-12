@@ -1,8 +1,8 @@
 {
-  "name": "tracknaija-web",
+  "name": "dravex-web",
   "version": "0.1.0",
   "private": true,
-  "description": "TrackNaija web dashboard — lost phone tracking & recovery for Nigeria",
+  "description": "Dravex web dashboard — lost phone tracking & recovery for Nigeria",
   "scripts": {
     "dev": "next dev",
     "build": "next build",

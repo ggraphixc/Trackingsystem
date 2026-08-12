@@ -17,6 +17,7 @@ import type { PairedDevice, ServerSettings } from "@/lib/api";
 import DeviceAlerts from "@/components/device-alerts";
 import {
   AlarmIcon,
+  AlertTriangleIcon,
   CrosshairIcon,
   DeviceMobileIcon,
   EyeIcon,
@@ -131,12 +132,16 @@ export default function AgentsPage() {
 
   async function toggleLost(device: PairedDevice) {
     setPendingLost(device.deviceId);
-    const ok = await setDeviceLost(device.deviceId, !device.lost);
+    const res = await setDeviceLost(device.deviceId, !device.lost);
     setPendingLost(null);
-    if (ok) {
+    if (res?.ok) {
       setToast(
         !device.lost
-          ? `${device.hostname ?? "Device"} marked lost — community beacon alerts are now active.`
+          ? `${device.hostname ?? "Device"} marked lost — community beacon active${
+              res.recoveryCode
+                ? ` · recovery code ${res.recoveryCode} (unlocks the app if the phone comes back)`
+                : ""
+            }.`
           : `${device.hostname ?? "Device"} marked found.`,
       );
       setTimeout(() => setToast(""), 5000);
@@ -282,7 +287,7 @@ export default function AgentsPage() {
       {/* Paired devices */}
       {devices.length === 0 ? (
         <Card className="p-10 text-center text-sm text-ink-muted">
-          No devices linked yet. Install the TrackNaija agent on your <strong>phone</strong> (Android
+          No devices linked yet. Install the Dravex agent on your <strong>phone</strong> (Android
           app — catches SIM swaps and works with data off) or <strong>laptop</strong> (desktop agent),
           generate a code above, and enter it in the app.
         </Card>
@@ -362,7 +367,7 @@ export default function AgentsPage() {
                       No signal for {offlineH < 24 ? `${Math.round(offlineH)} hours` : `${Math.round(offlineH / 24)} days`}.
                     </p>
                     <p className="mt-1 text-amber-700">
-                      Data off doesn't stop the community beacon — a nearby TrackNaija phone can still
+                      Data off doesn't stop the community beacon — a nearby Dravex phone can still
                       hear it. And the carrier + police can still trace the IMEI.
                     </p>
                     <Link href="/dashboard/offline-recovery" className="mt-2 inline-flex items-center gap-1.5 font-semibold text-primary">
@@ -403,7 +408,7 @@ export default function AgentsPage() {
                   <p className="mt-4 text-xs text-ink-faint">Waiting for the first location fix…</p>
                 )}
 
-                {/* Community sightings — a TrackNaija phone heard its beacon */}
+                {/* Community sightings — a Dravex phone heard its beacon */}
                 {sightings.length > 0 ? (
                   <div className="mt-4 rounded-xl border border-violet-100 bg-violet-50/60 p-3.5">
                     <p className="flex items-center gap-1.5 text-xs font-medium text-violet-700">
@@ -456,6 +461,15 @@ export default function AgentsPage() {
                     {d.lost ? "Found" : "Lost"}
                   </button>
                 </div>
+                {d.lost ? (
+                  <Link
+                    href={`/dashboard/recovery/${d.deviceId}`}
+                    className="mt-3 flex items-center justify-center gap-1.5 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-red-700 transition-colors duration-200 hover:bg-red-100"
+                  >
+                    <AlertTriangleIcon className="h-3.5 w-3.5" />
+                    Open recovery view
+                  </Link>
+                ) : null}
                 <p className="mt-2 text-[11px] text-ink-faint">
                   {d.commandCount} command{d.commandCount === 1 ? "" : "s"} queued · {d.evidenceCount}{" "}
                   evidence photo{d.evidenceCount === 1 ? "" : "s"}

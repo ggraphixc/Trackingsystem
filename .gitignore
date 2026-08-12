@@ -54,3 +54,6 @@ desktop/dist/
 
 # Runtime data (server writes this in file-storage mode)
 server/data.json
+
+# nested mirror/backup copy
+repo/

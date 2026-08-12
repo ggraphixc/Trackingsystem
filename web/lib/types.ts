@@ -51,11 +51,4 @@ export interface Incident {
   steps: IncidentStep[];
 }
 
-export interface SerialLookupResult {
-  found: boolean;
-  brand?: string;
-  model?: string;
-  status?: "clean" | "reported_stolen";
-  reportedAt?: string;
-  message: string;
-}
+

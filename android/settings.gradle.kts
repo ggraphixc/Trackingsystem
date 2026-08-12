@@ -14,5 +14,5 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "TrackNaijaAgent"
+rootProject.name = "DravexAgent"
 include(":app")

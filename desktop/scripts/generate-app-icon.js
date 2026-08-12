@@ -1,5 +1,5 @@
 /**
- * TrackNaija app icon generator — pure Node, no image libraries.
+ * Dravex app icon generator — pure Node, no image libraries.
  *
  * Design: rounded-square blue gradient tile with a white location pin
  * (orange head) and two radar arcs — the "tracking" story at a glance.
@@ -7,7 +7,7 @@
  *   build/icon.png         512x512 — electron-builder converts this to
  *                                   .ico (Windows) / .icns (macOS) /
  *                                   .png (Linux) automatically.
- *   assets/tracknaija.png   64x64  — the in-app window + tray icon.
+ *   assets/dravex.png   64x64  — the in-app window + tray icon.
  */
 const fs = require("fs");
 const path = require("path");
@@ -234,5 +234,5 @@ for (let y = 0; y < S64; y++) {
 const png64 = encodePng(S64, rgba64);
 const assetsDir = path.join(__dirname, "..", "assets");
 fs.mkdirSync(assetsDir, { recursive: true });
-fs.writeFileSync(path.join(assetsDir, "tracknaija.png"), png64);
-console.log("Wrote assets/tracknaija.png (" + png64.length + " bytes)");
+fs.writeFileSync(path.join(assetsDir, "dravex.png"), png64);
+console.log("Wrote assets/dravex.png (" + png64.length + " bytes)");

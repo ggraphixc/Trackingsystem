@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
 /** Safe, minimal bridge between the agent UI and the Electron main process. */
-contextBridge.exposeInMainWorld("tracknaija", {
+contextBridge.exposeInMainWorld("dravex", {
   getDeviceInfo: () => ipcRenderer.invoke("agent:get-info"),
   trackNow: () => ipcRenderer.invoke("agent:track-now"),
   getState: () => ipcRenderer.invoke("agent:get-state"),

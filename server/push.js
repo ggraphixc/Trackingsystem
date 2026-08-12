@@ -1,5 +1,5 @@
 /**
- * TrackNaija web-push — zero-dependency VAPID implementation.
+ * Dravex web-push — zero-dependency VAPID implementation.
  *
  * Strategy: the server sends a *payload-less* push (a "ping", Content-Length 0).
  * Per the Web Push spec a push without a payload still wakes the service
@@ -16,7 +16,7 @@
 
 const crypto = require("crypto");
 
-const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:alerts@tracknaija.local";
+const VAPID_SUBJECT = process.env.VAPID_SUBJECT || "mailto:alerts@dravex.local";
 
 /* ------------------------------ base64url -------------------------------- */
 
@@ -52,7 +52,7 @@ function getVapidKeys(store, persist) {
   const privateKeyPkcs8 = privateKey.export({ type: "pkcs8", format: "der" }).toString("base64");
   store.vapidKeys = { publicKey: pubRaw, privateKeyPkcs8 };
   if (persist) persist();
-  console.log("TrackNaija push: generated VAPID keys (public key:", pubRaw.slice(0, 16) + "…)");
+  console.log("Dravex push: generated VAPID keys (public key:", pubRaw.slice(0, 16) + "…)");
   return { publicKey: pubRaw, privateKeyObject: privateKey };
 }
 

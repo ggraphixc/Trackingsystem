@@ -2,7 +2,7 @@ param(
     [int]$Duration = 10
 )
 
-# TrackNaija desktop BLE scanner (Windows).
+# Dravex desktop BLE scanner (Windows).
 # Uses the native WinRT BluetoothLEAdvertisementWatcher through PowerShell —
 # no drivers, no native node modules. Watches BLE advertisements for our
 # service UUID (0000fffa-...) and emits JSON of heard beacon IDs + RSSI.

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
+  AlertTriangleIcon,
   CameraIcon,
   CrosshairIcon,
   DeviceMobileIcon,
@@ -23,7 +24,8 @@ const NAV = [
   { href: "/dashboard", label: "Overview", icon: ShieldCheckIcon },
   { href: "/dashboard/devices", label: "My Devices", icon: DeviceMobileIcon },
   { href: "/dashboard/incidents", label: "Incidents", icon: DocumentTextIcon },
-  { href: "/dashboard/serial-check", label: "Serial Check", icon: SearchIcon },
+  { href: "/dashboard/recovery", label: "Recovery", icon: AlertTriangleIcon },
+  { href: "/dashboard/serial-check", label: "Device Check", icon: SearchIcon },
   { href: "/dashboard/offline-recovery", label: "Offline Recovery", icon: WifiIcon },
   { href: "/dashboard/agents", label: "Agents", icon: CrosshairIcon },
   { href: "/dashboard/evidence", label: "Evidence", icon: CameraIcon },
@@ -116,7 +118,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             </button>
             <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-3 py-1 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-              Protected by TrackNaija
+              Protected by Dravex
             </span>
           </div>
           <div className="flex items-center gap-2">

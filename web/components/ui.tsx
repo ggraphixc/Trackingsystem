@@ -15,7 +15,7 @@ export function Logo({ size = 36 }: { size?: number }) {
         <ShieldCheckIcon style={{ width: size * 0.58, height: size * 0.58 }} />
       </span>
       <span className="text-lg font-bold tracking-tight text-ink">
-        Track<span className="text-accent">Naija</span>
+        Drav<span className="text-accent">ex</span>
       </span>
     </span>
   );

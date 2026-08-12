@@ -1,5 +1,5 @@
 /**
- * TrackNaija sync-server client (dashboard side).
+ * Dravex sync-server client (dashboard side).
  *
  * Points at the local sync server (server/) by default; set
  * NEXT_PUBLIC_SYNC_SERVER_URL at build time to point at the deployed server
@@ -127,9 +127,52 @@ export async function getSightings(deviceId: string): Promise<CommunitySighting[
   return (await req<CommunitySighting[]>(`/api/devices/${deviceId}/sightings`)) ?? [];
 }
 
-export async function setDeviceLost(deviceId: string, lost: boolean): Promise<boolean> {
-  const res = await req<{ ok: boolean }>(`/api/devices/${deviceId}/lost`, { lost });
-  return !!res?.ok;
+export async function setDeviceLost(
+  deviceId: string,
+  lost: boolean,
+): Promise<{ ok: boolean; recoveryCode?: string | null } | null> {
+  return req<{ ok: boolean; recoveryCode?: string | null }>(`/api/devices/${deviceId}/lost`, { lost });
+}
+
+export interface LocationFix {
+  lat: number;
+  lng: number;
+  accuracy: number | null;
+  source: string;
+  confidence?: number | null;
+  timestamp: string;
+  receivedAt?: string;
+  networks?: number | WifiNetwork[];
+  ipAddress?: string;
+  battery?: number;
+}
+
+/** Full device detail (events + recent sightings included) for the recovery view. */
+export async function getDevice(deviceId: string): Promise<PairedDevice | null> {
+  return req<PairedDevice>(`/api/devices/${deviceId}`);
+}
+
+/** Location history for one device, newest first. */
+export async function getFixes(deviceId: string, limit = 50): Promise<LocationFix[]> {
+  return (await req<LocationFix[]>(`/api/devices/${deviceId}/fixes?limit=${limit}`)) ?? [];
+}
+
+/**
+ * Public Dravex Device Check — query the stolen-device registry by IMEI or
+ * serial before buying a used phone/laptop. No auth, no owner data.
+ */
+export interface RegistryVerdict {
+  found: boolean;
+  status: "reported_stolen" | "clean";
+  type?: string | null;
+  label?: string | null;
+  reportedAt?: string;
+  previouslyReported?: boolean;
+  message: string;
+}
+
+export async function checkStolenRegistry(query: string): Promise<RegistryVerdict | null> {
+  return req<RegistryVerdict>(`/api/check?q=${encodeURIComponent(query)}`);
 }
 
 export async function getEvidence(deviceId: string): Promise<EvidenceItem[]> {

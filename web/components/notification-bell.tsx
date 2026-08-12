@@ -52,7 +52,7 @@ export default function NotificationBell() {
     if (!("serviceWorker" in navigator)) return;
     const writeSwSettings = () => {
       try {
-        const open = indexedDB.open("tracknaija-sw", 1);
+        const open = indexedDB.open("dravex-sw", 1);
         open.onupgradeneeded = () => {
           if (!open.result.objectStoreNames.contains("settings")) {
             open.result.createObjectStore("settings");

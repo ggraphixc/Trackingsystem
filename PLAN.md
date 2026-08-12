@@ -1,6 +1,6 @@
-# 💻 TrackNaija — Lost Laptop & Phone Tracking & Recovery (Nigeria)
+# 💻 Dravex — Lost Laptop & Phone Tracking & Recovery (Nigeria)
 
-> **Working title:** TrackNaija (placeholder — pick a brand name later)
+> **Product name:** Dravex
 >
 > **Status:** Phase 1–2 scaffold · **Verdict:** ✅ Feasible — agents in `desktop/` (laptops), `android/` (phones), `ios/` (companion), command center in `web/` (Next.js dashboard)
 
@@ -209,7 +209,7 @@ The agent polls every 2 minutes while running and stores the last fix locally (J
 
 ## 13. Design System (ui-ux-pro-max generated)
 
-Persisted in `design-system/tracknaija/MASTER.md` and mirrored in both apps:
+Persisted in `design-system/dravex/MASTER.md` and mirrored in both apps:
 
 | Token | Value |
 |---|---|
@@ -268,7 +268,7 @@ sync server, dashboard, registry and incident pipeline.
 TrackingApp/
 ├── PLAN.md                    ← this plan
 ├── README.md                  ← how to run everything
-├── design-system/tracknaija/  ← generated design tokens
+├── design-system/dravex/  ← generated design tokens
 ├── desktop/                   ← Electron agent (installed on laptops)
 │   ├── src/main.js            ← window, tray, IPC, tracking loop
 │   ├── src/tracking-engine.js ← signal ladder: Wi-Fi → IP → last known

@@ -38,7 +38,7 @@ const TIERS = [
   {
     icon: EyeIcon,
     title: "Offline evidence vault (our agent)",
-    text: "The TrackNaija agent keeps capturing webcam photos, fixes and SIM-change events locally while offline. The moment the phone touches ANY network, everything uploads in one burst and the dashboard alerts.",
+    text: "The Dravex agent keeps capturing webcam photos, fixes and SIM-change events locally while offline. The moment the phone touches ANY network, everything uploads in one burst and the dashboard alerts.",
     accent: "bg-amber-50 text-amber-600",
   },
   {
@@ -50,7 +50,7 @@ const TIERS = [
   {
     icon: MapPinIcon,
     title: "Community BLE relay (our network)",
-    text: "Your phone's agent broadcasts a Bluetooth beacon while it's on — even with the SIM out and data/Wi-Fi off. Any OTHER TrackNaija phone nearby hears it and reports a sighting with its own GPS. Mark the device LOST on the Agents page to activate alerts. Works while the phone is on; a fully powered-off phone emits nothing (that needs Pixel 8/9-class hardware + Google/Apple's closed networks).",
+    text: "Your phone's agent broadcasts a Bluetooth beacon while it's on — even with the SIM out and data/Wi-Fi off. Any OTHER Dravex phone nearby hears it and reports a sighting with its own GPS. Mark the device LOST on the Agents page to activate alerts. Works while the phone is on; a fully powered-off phone emits nothing (that needs Pixel 8/9-class hardware + Google/Apple's closed networks).",
     accent: "bg-violet-50 text-violet-600",
   },
 ];
@@ -516,13 +516,13 @@ export default function OfflineRecoveryPage() {
 
         <Kit
           step="5"
-          title="Activate the community beacon (TrackNaija) — mark the device LOST"
-          description="The beacon runs on the phone's own agent: it broadcasts over Bluetooth while the phone is on, needing no SIM, data or Wi-Fi. Other TrackNaija users' phones near it report sightings to your dashboard. Mark the device lost to start getting alert + push notifications for every sighting."
+          title="Activate the community beacon (Dravex) — mark the device LOST"
+          description="The beacon runs on the phone's own agent: it broadcasts over Bluetooth while the phone is on, needing no SIM, data or Wi-Fi. Other Dravex users' phones near it report sightings to your dashboard. Mark the device lost to start getting alert + push notifications for every sighting."
         >
           <ol className="list-inside space-y-2 text-sm text-ink-muted">
             {[
               "Open the Agents page and mark the device as LOST — beacon alerts activate.",
-              "Keep the TrackNaija app installed on other people's phones (Android 9+): the network only works where the app is installed.",
+              "Keep the Dravex app installed on other people's phones (Android 9+): the network only works where the app is installed.",
               "Allow battery-optimization exemption in Android settings — OEM battery managers can kill background Bluetooth scans otherwise.",
               "The beacon rotates daily (pseudonymous) so it can't be used to track a phone across days.",
               "Honest limit: a powered-off phone emits no Bluetooth. Powered-off finding needs Pixel 8/9-class hardware and Google/Apple's private networks.",

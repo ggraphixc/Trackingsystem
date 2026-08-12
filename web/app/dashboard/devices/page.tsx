@@ -112,7 +112,7 @@ export default function DevicesPage() {
                 </div>
               ) : (
                 <p className="mt-4 text-xs text-ink-faint">
-                  No location fix yet — install the TrackNaija agent on this {isPhone ? "phone" : "laptop"}{" "}
+                  No location fix yet — install the Dravex agent on this {isPhone ? "phone" : "laptop"}{" "}
                   and grant it network access.
                 </p>
               )}

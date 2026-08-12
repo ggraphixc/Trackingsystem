@@ -1,4 +1,4 @@
-# TrackNaija 0.2.0 — release notes
+# Dravex 0.2.0 — release notes
 
 ## Highlights
 
@@ -30,8 +30,8 @@
 
 ## Downloads
 
-- **Windows agent:** `TrackNaija Agent Setup 0.2.0.exe`
-- **Android APK:** `TrackNaija-Agent-0.1.0-debug.apk`
+- **Windows agent:** `Dravex Agent Setup 0.2.0.exe`
+- **Android APK:** `Dravex-Agent-0.1.0-debug.apk`
 
 ## Full changelog
 

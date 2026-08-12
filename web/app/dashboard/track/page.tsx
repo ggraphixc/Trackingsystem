@@ -112,7 +112,7 @@ export default function TrackPage() {
               </Card>
             ) : (
               <Card className="p-5 text-sm text-ink-muted">
-                No location fix recorded for this device yet. Install the TrackNaija agent on the
+                No location fix recorded for this device yet. Install the Dravex agent on the
                 laptop — it reports Wi-Fi and IP positions while running.
               </Card>
             )}

@@ -1,4 +1,4 @@
-# TrackNaija iOS Companion — Build Guide
+# Dravex iOS Companion — Build Guide
 
 The iOS companion **complements Apple Find My** (iOS blocks third-party background tracking, so it
 reports last-known location on demand and steers users to Find My for live tracking).
@@ -9,15 +9,15 @@ here, so you create one in Xcode and drop these files in).
 ## 1. Create the project
 
 1. Open **Xcode → File → New → Project → iOS → App**.
-2. Product name: `TrackNaija` · Interface: **SwiftUI** · Language: **Swift** · Organization:
-   `com.tracknaija` — Bundle ID will be `com.tracknaija.TrackNaija`.
-3. Save it inside this `ios/` folder (Xcode creates `TrackNaija.xcodeproj`).
-4. Delete the generated `TrackNaijaApp.swift` and `ContentView.swift`, then drag these files from
-   `ios/TrackNaija/` into the Xcode project (✓ Add to target `TrackNaija`):
+2. Product name: `Dravex` · Interface: **SwiftUI** · Language: **Swift** · Organization:
+   `com.dravex` — Bundle ID will be `com.dravex.Dravex`.
+3. Save it inside this `ios/` folder (Xcode creates `Dravex.xcodeproj`).
+4. Delete the generated `DravexApp.swift` and `ContentView.swift`, then drag these files from
+   `ios/Dravex/` into the Xcode project (✓ Add to target `Dravex`):
 
    | File | Purpose |
    |---|---|
-   | `TrackNaijaApp.swift` | App entry |
+   | `DravexApp.swift` | App entry |
    | `ContentView.swift` | This iPhone / Report lost / Find My tabs |
    | `LocationReporter.swift` | One-shot when-in-use location fix |
    | `SyncClient.swift` | URLSession client for the sync server |

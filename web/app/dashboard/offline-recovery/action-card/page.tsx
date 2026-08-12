@@ -121,7 +121,7 @@ export default function RecoveryActionCard() {
       <div className="rounded-2xl border-2 border-ink bg-white p-6 print:border-ink">
         <div className="flex items-center justify-between border-b-2 border-ink pb-3">
           <p className="text-lg font-bold tracking-wide text-ink">
-            TRACKNAIJA · RECOVERY ACTION CARD
+            DRAVEX · RECOVERY ACTION CARD
           </p>
           <p className="text-xs font-semibold text-ink-muted">
             {new Date().toLocaleDateString("en-NG", {

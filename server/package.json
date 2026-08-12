@@ -1,7 +1,7 @@
 {
-  "name": "tracknaija-sync-server",
+  "name": "dravex-sync-server",
   "version": "0.1.0",
-  "description": "TrackNaija local sync server — pairs desktop agents with the web dashboard, relays fixes, evidence and remote commands",
+  "description": "Dravex local sync server — pairs desktop agents with the web dashboard, relays fixes, evidence and remote commands",
   "private": true,
   "scripts": {
     "start": "node server.js",

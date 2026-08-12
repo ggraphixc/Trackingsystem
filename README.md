@@ -1,4 +1,4 @@
-# 💻 TrackNaija — Lost Laptop & Phone Tracking & Recovery (Nigeria)
+# 💻 Dravex — Lost Laptop & Phone Tracking & Recovery (Nigeria)
 
 A loss-prevention, recovery, and sustainability platform for **laptops and desktops** in Nigeria.
 See **[PLAN.md](PLAN.md)** for the full product & technical plan.
@@ -16,8 +16,8 @@ See **[PLAN.md](PLAN.md)** for the full product & technical plan.
 | `android/` | Android agent app for **phones** — GPS + Wi-Fi/cell signal ladder, foreground tracking service, lost mode, webcam evidence, remote alarm |
 | `ios/` | iOS **companion** — last-known-location reporting + Apple Find My guidance + police report (iOS blocks third-party background tracking) |
 | `server/` | Zero-dependency sync server — device pairing, fix/evidence sync, remote-command queue (swap for Appwrite in Phase 3) |
-| `web/` | Next.js command center — device vault, lost-device reporting hub → stolen registry, Serial Check for buyers, Agents page, Evidence gallery, impact dashboard |
-| `design-system/tracknaija/` | Generated design tokens (palette, typography, style rules) |
+| `web/` | Next.js command center — device vault, lost-device reporting hub → stolen registry, Device Check for buyers (IMEI/serial), Recovery Mode, Agents page, Evidence gallery |
+| `design-system/dravex/` | Generated design tokens (palette, typography, style rules) |
 | `PLAN.md` | Full product + technical plan |
 
 ## Run the desktop agent
@@ -25,7 +25,7 @@ See **[PLAN.md](PLAN.md)** for the full product & technical plan.
 ```bash
 cd desktop
 npm install          # installs Electron once
-npm run icon         # generates assets/tracknaija.png (tray + window icon)
+npm run icon         # generates assets/dravex.png (tray + window icon)
 npm start            # launches the agent — try it on the machine you want to protect
 ```
 

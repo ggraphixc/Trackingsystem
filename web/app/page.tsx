@@ -18,7 +18,7 @@ const PILLARS = [
   {
     icon: ShieldCheckIcon,
     title: "Protect",
-    body: "Register your laptops and desktops in a vault with their serial numbers captured up front — the proof you need if they ever go missing.",
+    body: "Register phones and laptops in a vault with their IMEI and serial numbers captured up front — the proof you need if they ever go missing.",
   },
   {
     icon: CrosshairIcon,
@@ -38,8 +38,8 @@ const PILLARS = [
 ];
 
 const STEPS = [
-  { n: "01", title: "Register your laptop", body: "30 seconds. Serial number auto-detected by the agent or via the sticker underneath." },
-  { n: "02", title: "Lose it? Tap report", body: "We generate your police report (NPF NCCC / CRP) and list the serial in the stolen registry automatically." },
+  { n: "01", title: "Register your device", body: "30 seconds. IMEI (dial *#06#) or serial number captured by the agent, or from the box/sticker." },
+  { n: "02", title: "Lose it? Tap report", body: "We generate your police report (NPF NCCC / CRP) and list the IMEI/serial in the stolen registry automatically." },
   { n: "03", title: "Track & catch", body: "Follow the Wi-Fi/IP signal ladder, fire the webcam, lock the screen — make it worthless to a thief." },
   { n: "04", title: "Save the planet", body: "Recovery and repair beat replacement. Watch your CO₂e impact grow." },
 ];
@@ -47,13 +47,13 @@ const STEPS = [
 const TESTIMONIALS = [
   {
     quote:
-      "My EliteBook was stolen from a repair bench in Ikeja. The webcam caught the guy, and the serial registry made it unsellable at Computer Village.",
+      "My EliteBook was stolen from a repair bench in Ikeja. The webcam caught the guy, and the stolen registry made it unsellable at Computer Village.",
     name: "Ada O.",
     role: "Lagos",
   },
   {
     quote:
-      "I was about to buy a used ThinkPad at Computer Village and checked the serial here first. It came back reported stolen — dodged a bullet.",
+      "I was about to buy a used iPhone at Computer Village and checked the IMEI here first. It came back reported stolen — dodged a bullet.",
     name: "Chinedu E.",
     role: "Enugu",
   },
@@ -70,7 +70,7 @@ export default function LandingPage() {
     <div className="min-h-screen bg-white">
       {/* ---------- Nav ---------- */}
       <header className="mx-auto flex max-w-6xl items-center justify-between px-4 py-5 lg:px-8">
-        <Link href="/" aria-label="TrackNaija home">
+        <Link href="/" aria-label="Dravex home">
           <Logo />
         </Link>
         <nav className="hidden items-center gap-6 text-sm font-medium text-ink-muted md:flex" aria-label="Main">
@@ -105,7 +105,7 @@ export default function LandingPage() {
           </h1>
           <p className="mx-auto mt-5 max-w-2xl text-lg text-ink-muted">
             Install the tracking agent on your laptop. If it{"'"}s stolen, get your police report,
-            stolen-serial registry listing and live Wi-Fi location in one place — and let the webcam
+            stolen-device registry listing and live location in one place — and let the webcam
             catch the thief in the act.
           </p>
           <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
@@ -122,7 +122,7 @@ export default function LandingPage() {
             {[
               { icon: AlertTriangleIcon, stat: "0", label: "built-in Find My on Windows/Linux" },
               { icon: CrosshairIcon, stat: "3 signals", label: "Wi-Fi · IP · last-known" },
-              { icon: DocumentTextIcon, stat: "2 clicks", label: "police report + serial registry" },
+              { icon: DocumentTextIcon, stat: "2 clicks", label: "police report + stolen registry" },
               { icon: LeafIcon, stat: "300 kg", label: "CO₂e saved per recovery" },
             ].map(({ icon: Icon, stat, label }) => (
               <div key={label} className="rounded-2xl border border-slate-200 bg-white p-4 text-left shadow-card">
@@ -162,12 +162,12 @@ export default function LandingPage() {
             <p className="mt-2 text-sm leading-relaxed text-ink-muted">
               Wi-Fi positioning finds a laptop to within tens of metres indoors. A webcam photo is
               admissible evidence. The NPF{"'"}s NCCC/CRP portals accept theft reports online. And a
-              public <span className="font-semibold text-ink">stolen-serial registry</span> makes
+              public <span className="font-semibold text-ink">stolen-device registry</span> makes
               fenced laptops unsellable at Computer Village and beyond.
             </p>
             <div className="mt-4 rounded-xl bg-slate-50 p-4 text-sm text-ink-muted">
-              <p className="font-semibold text-ink">TrackNaija wires them together:</p>
-              <p className="mt-1">agent → location → webcam → police report → serial registry.</p>
+              <p className="font-semibold text-ink">Dravex wires them together:</p>
+              <p className="mt-1">agent → location → webcam → police report → stolen registry.</p>
             </div>
           </div>
         </div>
@@ -210,8 +210,8 @@ export default function LandingPage() {
           </div>
           <div className="mt-10 grid gap-4 rounded-3xl border border-slate-200 bg-white p-6 shadow-card md:grid-cols-3">
             {[
-              { icon: MapPinIcon, t: "What if the agent isn't installed?", b: "The serial registry + police report still work — we build your recovery kit from the serial alone." },
-              { icon: SearchIcon, t: "Buying used? Check first.", b: "Run any serial number against the stolen registry before you pay. Free, forever." },
+              { icon: MapPinIcon, t: "What if the agent isn't installed?", b: "The stolen registry + police report still work — we build your recovery kit from the IMEI/serial alone." },
+              { icon: SearchIcon, t: "Buying used? Check first.", b: "Run any IMEI or serial number against the stolen registry before you pay. Free, forever." },
               { icon: DeviceMobileIcon, t: "Which devices?", b: "Laptops and desktops on Windows, macOS and Linux — one agent for your whole household." },
             ].map(({ icon: Icon, t, b }) => (
               <div key={t} className="flex gap-3">

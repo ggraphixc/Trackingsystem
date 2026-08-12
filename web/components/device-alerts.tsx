@@ -22,7 +22,7 @@ const FRESH_WINDOW_MIN = 30; // only alert on events within this window
  *
  * - Sky banner: a device that had gone quiet reconnected (fixes synced).
  * - Red banner: a device's SIM was swapped — strong evidence of reuse.
- * - Violet banner: a TrackNaija phone heard a LOST device's Bluetooth beacon
+ * - Violet banner: a Dravex phone heard a LOST device's Bluetooth beacon
  *   (community relay) — a location for the owner with no data/Wi-Fi needed.
  * - An activity feed lists the most recent events + sightings.
  *
@@ -57,7 +57,7 @@ export default function DeviceAlerts({ devices }: { devices: PairedDevice[] }) {
         }
         seen.current[key] = e.at;
       }
-      // Community sightings — a lost device heard by another TrackNaija phone.
+      // Community sightings — a lost device heard by another Dravex phone.
       const sightings = d.sightings ?? [];
       for (const s of sightings.slice(0, 3)) {
         const key = `${d.deviceId}:sighting:${s.receivedAt ?? s.at}`;
@@ -110,7 +110,7 @@ export default function DeviceAlerts({ devices }: { devices: PairedDevice[] }) {
 
   return (
     <>
-      {/* Community sighting — a lost phone heard by another TrackNaija phone */}
+      {/* Community sighting — a lost phone heard by another Dravex phone */}
       {sightingAlert ? (
         <div className="mb-6 flex flex-wrap items-start justify-between gap-3 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3">
           <div className="flex items-start gap-3">
@@ -119,7 +119,7 @@ export default function DeviceAlerts({ devices }: { devices: PairedDevice[] }) {
             </span>
             <div>
               <p className="text-sm font-semibold text-violet-900">
-                {sightingAlert.hostname} was just seen by a TrackNaija phone nearby
+                {sightingAlert.hostname} was just seen by a Dravex phone nearby
               </p>
               <p className="mt-0.5 text-xs text-violet-700">
                 Another user{`'`}s phone heard its Bluetooth beacon at{" "}

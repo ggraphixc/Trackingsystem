@@ -1,4 +1,4 @@
-package com.tracknaija.agent
+package com.dravex.agent
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -8,7 +8,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Talks to the TrackNaija sync server (same endpoints as the desktop agent).
+ * Talks to the Dravex sync server (same endpoints as the desktop agent).
  * Uses HttpURLConnection + org.json — no extra HTTP dependencies.
  * All methods return null/empty on failure so tracking never crashes offline.
  */
@@ -83,7 +83,7 @@ class SyncClient(private val serverUrl: String) {
         ) != null
 
     /**
-     * Community relay: this phone heard another TrackNaija phone's BLE beacon
+     * Community relay: this phone heard another Dravex phone's BLE beacon
      * and reports it with our GPS position. Anonymous — the server resolves
      * the beacon to a device internally and never leaks whether it was known.
      */

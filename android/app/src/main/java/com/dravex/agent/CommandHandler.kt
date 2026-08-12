@@ -1,4 +1,4 @@
-package com.tracknaija.agent
+package com.dravex.agent
 
 import android.content.Context
 import android.media.MediaPlayer
@@ -19,7 +19,7 @@ import java.util.concurrent.Executors
 
 /** Executes remote commands (alarm, webcam) issued from the dashboard. */
 object CommandHandler {
-    private const val TAG = "TrackNaija"
+    private const val TAG = "Dravex"
 
     /** Play the device ringtone loudly a few times — the "loud alarm". */
     fun playAlarm(context: Context) {

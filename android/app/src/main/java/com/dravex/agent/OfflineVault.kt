@@ -1,4 +1,4 @@
-package com.tracknaija.agent
+package com.dravex.agent
 
 import android.content.Context
 import org.json.JSONArray
@@ -13,7 +13,7 @@ import java.io.File
  * here in plain JSON and flushed to the sync server in ONE batch the moment
  * the phone touches ANY network (a cafe's Wi-Fi, or a new SIM's data).
  *
- * This is how TrackNaija still "tracks" an offline phone: capture keeps
+ * This is how Dravex still "tracks" an offline phone: capture keeps
  * happening locally, and the moment the device surfaces online everything
  * uploads and the dashboard learns where it has been since.
  *

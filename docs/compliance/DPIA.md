@@ -1,4 +1,4 @@
-# Data Protection Impact Assessment (DPIA) — TrackNaija
+# Data Protection Impact Assessment (DPIA) — Dravex
 
 > **Required by:** NDPA 2023 (high-risk processing: geolocation + biometric-adjacent image data) + GAID.
 > **Owner:** DPO · **Review cadence:** annually or on significant feature change.
@@ -9,7 +9,7 @@
 | Item | Detail |
 |---|---|
 | Processing | Continuous device location (Wi-Fi/IP) + webcam evidence capture in lost mode |
-| Data subjects | TrackNaija users (device owners); incidentally, persons captured by webcam evidence |
+| Data subjects | Dravex users (device owners); incidentally, persons captured by webcam evidence |
 | Volume | [est. users/devices] |
 | Tech | Desktop agent (Electron), sync server / Appwrite (PostGIS), web dashboard |
 

@@ -1,4 +1,4 @@
-package com.tracknaija.agent
+package com.dravex.agent
 
 import android.Manifest
 import android.content.pm.PackageManager
@@ -8,17 +8,18 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.ContextCompat
-import com.tracknaija.agent.databinding.ActivityMainBinding
+import com.dravex.agent.databinding.ActivityMainBinding
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-/** TrackNaija agent dashboard (Android). */
+/** Dravex agent dashboard (Android). */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private val state: AppState get() = AppState(this)
     private val scope = CoroutineScope(Dispatchers.IO)
+    private var ownershipLockShowing = false
 
     private val permissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
@@ -41,6 +42,48 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         renderState()
+    }
+
+    /**
+     * App-level activation barrier (FRP-style): when the device has been
+     * reported lost with a recovery code, the app locks on open and demands
+     * the code before it can be used again. The code is delivered by the
+     * dashboard's `lost` command — a thief who flashes the phone loses this
+     * layer, but while the agent survives, the device can't be silently reused.
+     */
+    private fun maybeShowOwnershipLock() {
+        val code = state.recoveryCode
+        if (!state.lostMode || code.isNullOrBlank() || ownershipLockShowing) return
+        ownershipLockShowing = true
+        val input = android.widget.EditText(this).apply {
+            inputType = android.text.InputType.TYPE_CLASS_NUMBER
+            hint = getString(R.string.recovery_code_hint)
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle(R.string.recovery_lock_title)
+            .setMessage(R.string.recovery_lock_body)
+            .setView(input)
+            .setCancelable(false)
+            .setPositiveButton(R.string.recovery_unlock) { d, _ ->
+                if (input.text.toString().trim() == code) {
+                    state.lostMode = false
+                    state.recoveryCode = null
+                    Toast.makeText(this, R.string.recovery_unlocked, Toast.LENGTH_SHORT).show()
+                    renderState()
+                } else {
+                    Toast.makeText(this, R.string.recovery_wrong, Toast.LENGTH_LONG).show()
+                    d.dismiss()
+                    ownershipLockShowing = false
+                    maybeShowOwnershipLock() // re-lock — the barrier stays up
+                }
+            }
+            .setNegativeButton(R.string.recovery_contact_owner) { d, _ ->
+                d.dismiss()
+                ownershipLockShowing = false
+                maybeShowOwnershipLock()
+            }
+            .setOnDismissListener { ownershipLockShowing = false }
+            .show()
     }
 
     private fun requestTrackingPermissions() {
@@ -67,6 +110,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun renderState() {
+        maybeShowOwnershipLock()
         binding.serverUrl.setText(state.serverUrl)
         binding.statusText.text =
             if (state.deviceId != null) {

@@ -1,6 +1,6 @@
-# TrackNaija — production deployment
+# Dravex — production deployment
 
-TrackNaija has three runtime pieces that need hosting:
+Dravex has three runtime pieces that need hosting:
 
 | Piece | What it is | Host |
 |---|---|---|
@@ -21,7 +21,7 @@ content). Both the dashboard and the sync server need public https URLs in produ
 2. Copy the **connection string** (Console → your project → Connection Details).
 3. Paste it into the sync server's `DATABASE_URL` env var (Render dashboard or local `.env`).
 
-The server auto-creates its schema on first boot (`tracknaija_kv` key/value table) and
+The server auto-creates its schema on first boot (`dravex_kv` key/value table) and
 switches from the JSON file to Postgres automatically — no code changes. If Neon is
 unreachable at boot the server **refuses to start** so you never silently lose data.
 
@@ -70,7 +70,7 @@ to the server console — handy for testing).
 
 ### Termii (Nigeria-native, cheaper NGN pricing, DND-friendly)
 1. https://termii.com → sign up, get an API key, configure a sender ID
-   (e.g. `TrackNaija`).
+   (e.g. `Dravex`).
 2. Env vars: `TERMII_API_KEY`, `TERMII_FROM`.
 
 Then, in the dashboard **Agents page → SMS fallback alerts**, enter the owner's phone

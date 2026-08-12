@@ -18,7 +18,7 @@ async function api(path, body) {
 }
 
 (async () => {
-  console.log("== TrackNaija sync E2E ==");
+  console.log("== Dravex sync E2E ==");
 
   // 1. Dashboard creates a pairing code.
   const pair = await api("/api/pair/register", { label: "TEST" });
@@ -219,7 +219,7 @@ async function api(path, body) {
   const lostCmd = lostCmds.find((c) => c.type === "lost");
   await client.ackCommand(deviceId, lostCmd.id);
 
-  // 21. ANOTHER TrackNaija phone (anonymous — no deviceId, just the beacon it
+  // 21. ANOTHER Dravex phone (anonymous — no deviceId, just the beacon it
   // heard over BLE) reports a sighting with the scanner's GPS position.
   const { beaconFor } = require("./beacon");
   const beacon = beaconFor(deviceId);
@@ -259,6 +259,49 @@ async function api(path, body) {
     `[24] device row: type=${row.type} lost=${row.lost} sightings=${row.sightingCount} operator=${row.operator}`,
   );
   if (row.type !== "laptop" || !row.lost || row.sightingCount !== 1) throw new Error("device row fields wrong");
+
+  // 25. Re-marking lost generates a recovery code and delivers it inside the
+  // `lost` command payload — the Android agent uses it for the ownership lock.
+  const lostAgain = await api(`/api/devices/${deviceId}/lost`, { lost: true });
+  const lostCmds2 = await client.getCommands(deviceId, null);
+  const lostCmd2 = lostCmds2.find((c) => c.type === "lost");
+  console.log(
+    `[25] re-lost: recoveryCode=${lostAgain.recoveryCode} payloadCode=${lostCmd2?.payload?.recoveryCode}`,
+  );
+  if (!/^\d{4,8}$/.test(String(lostAgain.recoveryCode))) throw new Error("no recovery code generated");
+  if (lostCmd2?.payload?.recoveryCode !== lostAgain.recoveryCode) {
+    throw new Error("recovery code not delivered in command payload");
+  }
+  await client.ackCommand(deviceId, lostCmd2.id);
+
+  // 26. The public Dravex Device Check flags the device's serial as stolen —
+  // verdict only, NEVER owner/deviceId/location data (label stays generic).
+  const hit = await api("/api/check?q=SN12345");
+  console.log(`[26] check serial: found=${hit.found} status=${hit.status} label=${hit.label}`);
+  if (!hit.found || hit.status !== "reported_stolen") throw new Error("registry check missed the stolen device");
+  if ("deviceId" in hit || "hostname" in hit) throw new Error("check endpoint leaked owner data");
+  if (hit.label !== "A laptop") throw new Error("check endpoint leaked a personal device label");
+
+  // 27. Unknown identifiers come back clean — the registry can't be probed.
+  const miss = await api("/api/check?q=ZZZ999UNKNOWN");
+  console.log(`[27] check unknown: found=${miss.found} status=${miss.status}`);
+  if (miss.found) throw new Error("unknown serial flagged as stolen");
+
+  // 28. Marking found resolves the registry entry — the device reads clean
+  // again (with a previouslyReported note, so honest sellers aren't flagged).
+  const foundRes = await api(`/api/devices/${deviceId}/lost`, { lost: false });
+  const afterFound = await api("/api/check?q=SN12345");
+  console.log(
+    `[28] mark found: ok=${foundRes.ok} check=${afterFound.status} previouslyReported=${afterFound.previouslyReported}`,
+  );
+  if (!foundRes.ok || afterFound.found || afterFound.status !== "clean" || !afterFound.previouslyReported) {
+    throw new Error("resolved registry entry not returned as clean");
+  }
+
+  // 29. Too-short check queries are rejected with a 400.
+  const short = await fetch(BASE + "/api/check?q=abc");
+  console.log(`[29] short query rejected: HTTP ${short.status}`);
+  if (short.status !== 400) throw new Error("short query not rejected");
 
   console.log("== E2E PASSED ==");
 })().then(

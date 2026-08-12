@@ -1,4 +1,4 @@
-# TrackNaija sync server — Docker image for Render/Fly/Fly.io-style hosting.
+# Dravex sync server — Docker image for Render/Fly/Fly.io-style hosting.
 #
 # The server is zero-dependency Node (pg is an optional dep, installed here
 # so Neon works when DATABASE_URL is set). HOST is overridden to 0.0.0.0 so

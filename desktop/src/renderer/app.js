@@ -1,6 +1,6 @@
-/* TrackNaija — tracking dashboard renderer (Electron, preload bridge). */
+/* Dravex — tracking dashboard renderer (Electron, preload bridge). */
 (function () {
-  const api = window.tracknaija;
+  const api = window.dravex;
   if (!api) {
     document.body.innerHTML =
       '<p style="padding:40px;font-family:monospace">Preload bridge missing — run via Electron, not a browser.</p>';
@@ -327,6 +327,12 @@
       if (dev) dev.lost = next;
       renderNavBadges();
       renderStats();
+      if (next && res.recoveryCode) {
+        const name = deviceName(dev || {});
+        alert(
+          `${name} marked lost. Recovery code: ${res.recoveryCode}\n\nKeep this code — it unlocks the device's app (ownership check) if the phone comes back to you.`,
+        );
+      }
     }
   }
 
@@ -336,7 +342,7 @@
     const dev = devices.find((d) => d.deviceId === deviceId);
     const name = deviceName(dev || {});
     if (list.length === 0) {
-      alert(`No community sightings for ${name} yet.\n\nSightings appear when another TrackNaija device hears its beacon nearby — while it is marked lost.`);
+      alert(`No community sightings for ${name} yet.\n\nSightings appear when another Dravex device hears its beacon nearby — while it is marked lost.`);
       return;
     }
     const lines = list
@@ -411,7 +417,7 @@
       <p class="popup-meta">${Number(s.lat).toFixed(5)}°, ${Number(s.lng).toFixed(5)}°${Number(s.accuracy) ? ` · ±${Number(s.accuracy)} m` : ""}</p>
       ${near}
       <p class="popup-meta">beacon ${escapeHtml(s.beacon || "")} · ${t}</p>
-      <span class="popup-tag sighting">● Seen by another TrackNaija device</span>
+      <span class="popup-tag sighting">● Seen by another Dravex device</span>
     </div>`;
   }
 
@@ -624,7 +630,7 @@
 
     const dev = res.device;
     const slug = String(dev.hostname || "device").replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase() || "device";
-    const filename = `TrackNaija-Report-${slug}-${new Date().toISOString().slice(0, 10)}.html`;
+    const filename = `Dravex-Report-${slug}-${new Date().toISOString().slice(0, 10)}.html`;
     const saved = await api.saveReport(html, filename);
     if (saved && saved.ok) {
       alert(
@@ -733,7 +739,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<title>TrackNaija Incident Report — ${escapeHtml(dev.hostname || "device")}</title>
+<title>Dravex Incident Report — ${escapeHtml(dev.hostname || "device")}</title>
 <style>
   * { box-sizing: border-box; }
   body { font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; color: #1e293b; margin: 0 auto; padding: 32px 40px; max-width: 900px; background: #fff; }
@@ -761,7 +767,7 @@
 </style>
 </head>
 <body>
-  <p class="brand">TRACKNAIJA</p>
+  <p class="brand">DRAVEX</p>
   <h1>Incident Report — ${escapeHtml(dev.hostname || "Unnamed device")}</h1>
   <p class="meta">Generated ${now} · Device ID ${escapeHtml(String(dev.deviceId || "").slice(0, 8))}</p>
 
@@ -791,7 +797,7 @@
   <div class="photos">${evidenceHtml}</div>
 
   <footer>
-    Prepared with TrackNaija. IMEI/serial and sighting data are intended for law-enforcement follow-up
+    Prepared with Dravex. IMEI/serial and sighting data are intended for law-enforcement follow-up
     (report the IMEI to the police for NPF/SCID network tracing). Device data is collected with owner
     consent and handled in line with the NDPA 2023.
   </footer>
@@ -861,7 +867,7 @@
     scanning = true;
     $("btn-scan").disabled = true;
     $("btn-scan").textContent = "Scanning…";
-    $("scan-status").innerHTML = '<span class="scan-spinner"></span> Sweeping for TrackNaija beacons…';
+    $("scan-status").innerHTML = '<span class="scan-spinner"></span> Sweeping for Dravex beacons…';
     $("scan-results").innerHTML = "";
 
     const duration = Number($("scan-duration").value || 15);
@@ -882,8 +888,8 @@
     if (beacons.length === 0) {
       $("scan-status").textContent =
         res.reason === "unsupported"
-          ? "Sweep finished — no TrackNaija beacons heard. (Bluetooth adapter unavailable: " + (res.reason || "unknown") + ")"
-          : "Sweep finished — no TrackNaija beacons in range. Lost phones near you broadcast one; keep this dashboard open and sweep again.";
+          ? "Sweep finished — no Dravex beacons heard. (Bluetooth adapter unavailable: " + (res.reason || "unknown") + ")"
+          : "Sweep finished — no Dravex beacons in range. Lost phones near you broadcast one; keep this dashboard open and sweep again.";
       $("scan-results").innerHTML =
         '<div class="scan-empty">No beacons heard. If a lost device is nearby, its beacon will show up here.</div>';
       return;
@@ -900,7 +906,7 @@
           <span class="scan-spinner" style="border-top-color:var(--violet)"></span>
           <div>
             <div class="beacon-id">${escapeHtml(b.beacon)}</div>
-            <div class="beacon-meta">TrackNaija beacon · ${b.rssi ?? "?"} dBm</div>
+            <div class="beacon-meta">Dravex beacon · ${b.rssi ?? "?"} dBm</div>
           </div>
         </div>`,
       )

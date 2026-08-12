@@ -1,4 +1,4 @@
-# TrackNaija Android agent — build the APK automatically.
+# Dravex Android agent — build the APK automatically.
 #
 #   * Every push to `main` (and every pull request): compile the debug APK
 #     and upload it as a workflow artifact. If the Kotlin/Beacon code breaks
@@ -55,7 +55,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: tracknaija-agent-debug-apk
+          name: dravex-agent-debug-apk
           path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
@@ -69,7 +69,7 @@ jobs:
       - name: Download built APK
         uses: actions/download-artifact@v4
         with:
-          name: tracknaija-agent-debug-apk
+          name: dravex-agent-debug-apk
           path: apk
 
       - name: Create/update GitHub Release with the APK

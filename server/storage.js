@@ -1,5 +1,5 @@
 /**
- * TrackNaija storage — dual mode, same API contract.
+ * Dravex storage — dual mode, same API contract.
  *
  *   Mode 1 (default): JSON file (data.json). Zero dependencies, works fully
  *   offline — perfect for the local sync server the desktop agent talks to.
@@ -16,7 +16,7 @@
  *
  * Postgres layout (auto-created on first connect):
  *
- *   CREATE TABLE IF NOT EXISTS tracknaija_kv (
+ *   CREATE TABLE IF NOT EXISTS dravex_kv (
  *     key   text PRIMARY KEY,
  *     value jsonb NOT NULL
  *   );
@@ -78,7 +78,7 @@ function createPgStorage(url) {
 
   const pool = new Pool({ connectionString: url, max: 3, connectionTimeoutMillis: 10_000 });
   const ready = pool
-    .query("CREATE TABLE IF NOT EXISTS tracknaija_kv (key text PRIMARY KEY, value jsonb NOT NULL)")
+    .query("CREATE TABLE IF NOT EXISTS dravex_kv (key text PRIMARY KEY, value jsonb NOT NULL)")
     .catch((err) => {
       console.error("Failed to initialise Neon schema:", err.message);
       throw err;
@@ -101,7 +101,7 @@ function createPgStorage(url) {
     async load() {
       await ready;
       const { rows } = await pool.query(
-        "SELECT value FROM tracknaija_kv WHERE key = 'store'",
+        "SELECT value FROM dravex_kv WHERE key = 'store'",
       );
       return rows.length ? rows[0].value : null;
     },
@@ -111,7 +111,7 @@ function createPgStorage(url) {
       queue = queue
         .then(() =>
           pool.query(
-            `INSERT INTO tracknaija_kv (key, value) VALUES ('store', $1)
+            `INSERT INTO dravex_kv (key, value) VALUES ('store', $1)
              ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
             [blob],
           ),
@@ -129,10 +129,10 @@ function createPgStorage(url) {
 function createStorage() {
   const url = process.env.DATABASE_URL;
   if (url) {
-    console.log("TrackNaija storage: Neon Postgres mode (DATABASE_URL detected)");
+    console.log("Dravex storage: Neon Postgres mode (DATABASE_URL detected)");
     return createPgStorage(url);
   }
-  console.log("TrackNaija storage: JSON file mode (set DATABASE_URL to use Neon)");
+  console.log("Dravex storage: JSON file mode (set DATABASE_URL to use Neon)");
   return createFileStorage();
 }
 

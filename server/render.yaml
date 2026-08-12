@@ -1,4 +1,4 @@
-# Render blueprint for the TrackNaija sync server.
+# Render blueprint for the Dravex sync server.
 #
 # Deploy: push this repo to GitHub, then in Render → New → Blueprint, pick
 # the repo. Render reads this file and provisions the service. Then set the
@@ -7,7 +7,7 @@
 # See docs/DEPLOY.md for the full walkthrough.
 services:
   - type: web
-    name: tracknaija-sync
+    name: dravex-sync
     runtime: docker
     plan: free
     dockerfilePath: ./server/Dockerfile

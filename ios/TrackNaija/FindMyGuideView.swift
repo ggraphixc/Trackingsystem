@@ -51,7 +51,7 @@ struct FindMyGuideView: View {
             }
 
             Section("3 · Then report it") {
-                Text("Back on the Report tab, generate your police report and list the device in the TrackNaija stolen registry — a fenced iPhone becomes unsellable.")
+                Text("Back on the Report tab, generate your police report and list the device in the Dravex stolen registry — a fenced iPhone becomes unsellable.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
@@ -72,7 +72,7 @@ struct PoliceReportView: View {
     var body: some View {
         Form {
             Section {
-                Text("TrackNaija generates your report text; submit it via the NPF NCCC portal (nccc.npf.gov.ng) or CRP (crp.ng, USSD *121#).")
+                Text("Dravex generates your report text; submit it via the NPF NCCC portal (nccc.npf.gov.ng) or CRP (crp.ng, USSD *121#).")
                     .font(.footnote)
             }
             Section("Report") {

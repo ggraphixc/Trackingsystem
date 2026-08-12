@@ -1,4 +1,4 @@
-# TrackNaija Desktop Agent (Electron)
+# Dravex Desktop Agent (Electron)
 
 The **tracking agent** that installs on laptops/desktops (Windows, macOS, Linux). It:
 
@@ -17,7 +17,7 @@ The **tracking agent** that installs on laptops/desktops (Windows, macOS, Linux)
 ```bash
 cd desktop
 npm install          # installs Electron (downloads the runtime once)
-npm run icon         # generates assets/tracknaija.png (tray + window icon)
+npm run icon         # generates assets/dravex.png (tray + window icon)
 npm start            # launches the agent UI
 ```
 
@@ -42,11 +42,11 @@ desktop/
 ├── scripts/generate-icon.js# generates the brand icon PNG (no image deps)
 ├── src/
 │   ├── main.js             # window, tray, auto-start, IPC, tracking loop
-│   ├── preload.js          # contextBridge API (window.tracknaija)
+│   ├── preload.js          # contextBridge API (window.dravex)
 │   ├── tracking-engine.js  # signal ladder: Wi-Fi scan → IP geo → last known
 │   ├── commands.js         # device info, serial, lock, alarm (per-platform)
 │   └── renderer/           # agent dashboard UI (index.html / styles.css / app.js)
-└── assets/tracknaija.png   # generated icon
+└── assets/dravex.png   # generated icon
 ```
 
 ## Notes & privacy

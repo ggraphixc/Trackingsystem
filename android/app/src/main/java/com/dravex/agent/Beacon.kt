@@ -1,4 +1,4 @@
-package com.tracknaija.agent
+package com.dravex.agent
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
@@ -26,7 +26,7 @@ import java.security.MessageDigest
  * A paired phone broadcasts a short pseudonymous beacon ID over Bluetooth LE
  * (advertising works with the SIM out and data/Wi-Fi off — the exact window
  * where a stolen phone is being used or sits in a repair shop). Any OTHER
- * TrackNaija phone that hears it reports a sighting with its own GPS position,
+ * Dravex phone that hears it reports a sighting with its own GPS position,
  * so the owner learns where the phone was last seen without the phone itself
  * having any connectivity.
  *
@@ -146,7 +146,7 @@ object Beacon {
     private var scanning = false
 
     /**
-     * Scan for TrackNaija beacons for up to [durationMs]. Returns the beacon
+     * Scan for Dravex beacons for up to [durationMs]. Returns the beacon
      * IDs heard (deduplicated). Call from a background thread — the scan
      * callback runs on the main looper; use a CountDownLatch to bridge.
      */

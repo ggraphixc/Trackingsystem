@@ -5,7 +5,7 @@
 > that. But turning off mobile data gives a thief **zero protection** against
 > the four channels below — and most thieves never achieve a truly dead phone.
 
-This document is the source of truth for TrackNaija's offline strategy: what
+This document is the source of truth for Dravex's offline strategy: what
 the agent captures, what the dashboard generates, and the exact Nigeria legal
 workflow that makes each channel actionable.
 
@@ -42,7 +42,7 @@ registered it. Both the **NPF-NCCC** and the **State Criminal Investigation
 Department (SCID)** can request this; SCID is the stronger escalation for
 tracked/stolen phone cases.
 
-**What TrackNaija does:** the dashboard's **Offline Recovery → carrier
+**What Dravex does:** the dashboard's **Offline Recovery → carrier
 cell-location request** kit generates the exact letter (per operator:
 MTN/Airtel/Glo/9mobile) with the IMEI, police reference and legal citations,
 ready to print and submit. The agent pre-populates the device details.
@@ -65,7 +65,7 @@ Samsung users also have **SmartThings Find** — an independent offline
 locating network over Bluetooth/BLE that can report a lost Galaxy phone even
 when it has no data or Wi-Fi.
 
-**What TrackNaija does:** the Offline Recovery page includes the enable-now
+**What Dravex does:** the Offline Recovery page includes the enable-now
 checklist (Google Find My + SmartThings Find) + links. We complement these
 channels — we don't compete with them.
 
@@ -74,7 +74,7 @@ channels — we don't compete with them.
 **Physics:** storage and capture don't need a network. While the phone is in
 the thief's hands with data off, the agent keeps working locally.
 
-**What TrackNaija does (Android agent):**
+**What Dravex does (Android agent):**
 - **`OfflineVault`** — a persistent, bounded queue on disk (`offline_queue.json`)
   holding fixes, webcam evidence and events.
 - **Captures while offline:** lost mode grabs webcam photos every ~5 min
@@ -93,7 +93,7 @@ the thief's hands with data off, the agent keeps working locally.
 
 **Physics:** Bluetooth doesn't need the internet, a SIM, or Wi-Fi. A phone
 whose SIM has been pulled and data switched off still emits BLE — and any
-nearby phone running the TrackNaija app can hear it. The scanning phone then
+nearby phone running the Dravex app can hear it. The scanning phone then
 uses **its own** internet to report the sighting with its own GPS position.
 
 **This is the channel we BUILD (the user's Bluetooth idea, done right):**
@@ -104,7 +104,7 @@ uses **its own** internet to report the sighting with its own GPS position.
   rotates daily, so a listener can't track a phone across days
   (`Beacon.kt` ↔ `server/beacon.js` share the hash).
 - **Scan (duty-cycled):** the same app scans ~12 s every ~5 min for other
-  TrackNaija beacons and reports sightings to `POST /api/sightings` with the
+  Dravex beacons and reports sightings to `POST /api/sightings` with the
   scanner's own position — no device identity attached.
 - **Alert:** when the owner has **marked the device lost** (Agents page →
   *Lost*), every sighting raises an in-app alert + push: *"your phone was
@@ -127,7 +127,7 @@ uses **its own** internet to report the sighting with its own GPS position.
   unless the user exempts the app from battery optimization — the app should
   prompt for this.
 - Network effect: the relay is only as dense as the number of installed
-  TrackNaija apps. It is a growth story, not a blocker.
+  Dravex apps. It is a growth story, not a blocker.
 
 ### 4 · IMEI blacklist (NCC-DMS / CEIR) — the deterrent
 
@@ -141,7 +141,7 @@ desk** with: police report, proof of purchase, and a government ID (NIN /
 passport / driver's licence). No consumer self-service portal exists — the
 request goes through the operator.
 
-**What TrackNaija does:** the Offline Recovery → **IMEI blacklist request**
+**What Dravex does:** the Offline Recovery → **IMEI blacklist request**
 kit generates the operator letter plus the required-documents checklist. This
 is also why the **Serial Check** page (used-laptop buyers) and the registry
 matter: a blacklisted identifier is a trap for the buyer too.
@@ -176,7 +176,7 @@ a brick.
    and have them submit the IMEI to the four operators (MTN, Airtel, Glo,
    9mobile).
 
-**What TrackNaija does:** the Offline Recovery page now includes a
+**What Dravex does:** the Offline Recovery page now includes a
 **"After a factory reset"** section with the FRP/Activation-Lock checklist,
 and the carrier/blacklist kits already cite the SCID + NIN-linked-SIM path.
 
@@ -198,7 +198,7 @@ Thief turns data/Wi-Fi OFF
         │             fixes, webcam photos, SIM-change events, "reconnected" alert
         │
         ├─► [5] Community BLE relay (ours) — phone on, SIM out, data off:
-        │        other TrackNaija phones hear its beacon → report sighting
+        │        other Dravex phones hear its beacon → report sighting
         │        with THEIR GPS → owner gets "seen at …" push/SMS alert
         │        (requires the device to be marked LOST; Android-to-Android)
         │

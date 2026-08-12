@@ -1,8 +1,8 @@
 /**
  * Community BLE beacon — shared identity logic.
  *
- * A paired TrackNaija agent (Android phone, and later laptops) broadcasts a
- * short, pseudonymous beacon ID over Bluetooth LE. Any OTHER TrackNaija phone
+ * A paired Dravex agent (Android phone, and later laptops) broadcasts a
+ * short, pseudonymous beacon ID over Bluetooth LE. Any OTHER Dravex phone
  * that hears it reports a "sighting" with its own GPS position — the owner's
  * dashboard then learns "your phone was seen near this coordinate", even
  * though the stolen phone itself has no data/Wi-Fi.

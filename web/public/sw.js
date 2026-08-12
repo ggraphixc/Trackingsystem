@@ -1,4 +1,4 @@
-/* TrackNaija — push service worker.
+/* Dravex — push service worker.
  *
  * The sync server sends payload-less push pings (Content-Length 0). On each
  * ping we fetch the latest unread alert from the sync server and render the
@@ -13,7 +13,7 @@
  * a plain-http sync server — mixed content). For local development on
  * localhost both http endpoints work fine.
  */
-const DB_NAME = "tracknaija-sw";
+const DB_NAME = "dravex-sw";
 const DB_STORE = "settings";
 const DEFAULT_SERVER = "http://localhost:4173";
 
@@ -56,14 +56,14 @@ self.addEventListener("push", (event) => {
         /* server unreachable — still show a generic wake-up notification */
       }
       const title = alert
-        ? `${alert.hostname} — TrackNaija`
-        : "TrackNaija — device activity";
+        ? `${alert.hostname} — Dravex`
+        : "Dravex — device activity";
       const body = alert
         ? alert.body
         : "Something changed on one of your devices. Open the dashboard.";
       return self.registration.showNotification(title, {
         body,
-        tag: alert ? `tracknaija-${alert.id}` : "tracknaija",
+        tag: alert ? `dravex-${alert.id}` : "dravex",
         renotify: false,
         silent: false,
       });

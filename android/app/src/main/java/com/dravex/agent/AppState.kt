@@ -1,4 +1,4 @@
-package com.tracknaija.agent
+package com.dravex.agent
 
 import android.content.Context
 import org.json.JSONObject
@@ -7,7 +7,7 @@ import org.json.JSONObject
 class AppState(context: Context) {
 
     private val prefs =
-        context.getSharedPreferences("tracknaija_state", Context.MODE_PRIVATE)
+        context.getSharedPreferences("dravex_state", Context.MODE_PRIVATE)
 
     var serverUrl: String
         get() = prefs.getString("server_url", "http://192.168.1.100:4173") ?: ""
@@ -24,6 +24,15 @@ class AppState(context: Context) {
     var lostMode: Boolean
         get() = prefs.getBoolean("lost_mode", false)
         set(v) = prefs.edit().putBoolean("lost_mode", v).apply()
+
+    /**
+     * Owner-set PIN delivered with the dashboard's `lost` command. While set,
+     * the app shows an ownership-verification lock on open (app-level
+     * activation barrier — the device can't be silently reused).
+     */
+    var recoveryCode: String?
+        get() = prefs.getString("recovery_code", null)
+        set(v) = prefs.edit().putString("recovery_code", v).apply()
 
     var lastCommandId: String?
         get() = prefs.getString("last_command_id", null)

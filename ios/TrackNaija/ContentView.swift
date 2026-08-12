@@ -58,7 +58,7 @@ struct ContentView: View {
                     Section { Text(statusMessage).font(.caption) }
                 }
             }
-            .navigationTitle("TrackNaija")
+            .navigationTitle("Dravex")
             .onAppear {
                 // Wire the location reporter's callback to upload.
                 locationReporter.onFix = { coordinate in
@@ -74,7 +74,7 @@ struct ContentView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("If this iPhone is lost or stolen, Apple's Find My is the fastest way to locate, lock, or erase it. TrackNaija covers the rest: the police report and stolen-device registry.")
+                    Text("If this iPhone is lost or stolen, Apple's Find My is the fastest way to locate, lock, or erase it. Dravex covers the rest: the police report and stolen-device registry.")
                         .font(.footnote)
                 }
                 Section("Stolen-device report") {

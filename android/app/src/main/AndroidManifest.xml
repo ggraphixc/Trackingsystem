@@ -38,7 +38,7 @@
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/Theme.TrackNaija"
+        android:theme="@style/Theme.Dravex"
         android:usesCleartextTraffic="true">
 
         <activity

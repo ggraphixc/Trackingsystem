@@ -1,6 +1,6 @@
 import Foundation
 
-/// Minimal client for the TrackNaija sync server (URLSession only).
+/// Minimal client for the Dravex sync server (URLSession only).
 /// Mirrors the desktop/Android clients' endpoints.
 struct SyncClient {
     let baseURL: String

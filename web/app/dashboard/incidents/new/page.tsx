@@ -128,7 +128,7 @@ export default function NewIncidentPage() {
               <h3 className="mb-2 text-sm font-semibold text-ink">2 · Stolen serial registry</h3>
               <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 text-xs leading-relaxed text-ink">
                 <p>
-                  This device is now listed in the TrackNaija stolen registry (ref{" "}
+                  This device is now listed in the Dravex stolen registry (ref{" "}
                   <span className="font-mono">{done.registryRef}</span>) with serial{" "}
                   <span className="font-mono">{done.serialNumber}</span>. Anyone buying a used laptop
                   can check the serial first — fenced laptops become unsellable.

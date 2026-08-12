@@ -4,7 +4,7 @@ const fs = require("fs");
 const https = require("https");
 
 /**
- * TrackNaija desktop "signal ladder".
+ * Dravex desktop "signal ladder".
  *
  * Laptops have no GPS and no IMEI, so the ladder is:
  *   1. Wi-Fi positioning   — scan nearby BSSIDs (indoor-accurate)

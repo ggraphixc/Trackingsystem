@@ -1,5 +1,5 @@
 /**
- * TrackNaija Sync Server.
+ * Dravex Sync Server.
  *
  * Zero-dependency Node HTTP server that connects desktop agents to the web
  * dashboard:
@@ -21,6 +21,14 @@
  *   GET  /api/settings          dashboard → SMS-alert config + provider status
  *   POST /api/settings          dashboard → save owner phone + enable SMS
  *   POST /api/sms/test          dashboard → send a test SMS to the owner
+ *   GET  /api/check             public    → stolen-device check (IMEI/serial)
+ *
+ * Security status (Phase 1): the API is intentionally unauthenticated so the
+ * agents and the public check can work with zero setup. The pairing code and
+ * deviceId are the de-facto secrets. That means anyone who can reach the API
+ * can also read the recoveryCode returned by POST /lost or delivered in the
+ * command payload — Phase 2 must gate /lost, /devices and /commands behind
+ * real auth. /api/check is rate-limited (30/min/IP) against enumeration.
  *
  * Storage is dual-mode (storage.js): a JSON file by default, or Neon
  * Postgres the moment DATABASE_URL is set — the API contract never changes.
@@ -69,7 +77,7 @@ const DEFAULT_SETTINGS = {
   smsLastResult: null,
 };
 
-let store = { devices: {}, pairCodes: {}, alerts: [], pushSubscriptions: [], settings: DEFAULT_SETTINGS };
+let store = { devices: {}, pairCodes: {}, alerts: [], pushSubscriptions: [], settings: DEFAULT_SETTINGS, stolen: [] };
 
 // Nigerian mobile operators by MNC (MCC 621). The Android agent fingerprints
 // the SIM as "<mcc><mnc>|<state>" — decode it so the dashboard can show the
@@ -198,7 +206,7 @@ function raiseAlert(type, dev, body, opts = {}) {
 }
 
 /**
- * A community BLE sighting: another TrackNaija phone heard this device's
+ * A community BLE sighting: another Dravex phone heard this device's
  * beacon. Privacy-first: sightings are ONLY recorded for devices the owner
  * has marked LOST (the beacon only broadcasts while lost), and alerts are
  * throttled to one per 30 min per device so a noisy area or a beacon replay
@@ -220,7 +228,7 @@ function storeSighting(dev, sighting) {
   raiseAlert(
     "sighting",
     dev,
-    `${dev.hostname || "Your device"} was just seen by a TrackNaija phone nearby (${sighting.lat.toFixed(4)}°, ${sighting.lng.toFixed(4)}°). A community member heard its Bluetooth beacon — move now.`,
+    `${dev.hostname || "Your device"} was just seen by a Dravex phone nearby (${sighting.lat.toFixed(4)}°, ${sighting.lng.toFixed(4)}°). A community member heard its Bluetooth beacon — move now.`,
     { sms: false },
   );
 }
@@ -244,7 +252,7 @@ function smsNotify(store, alert) {
   if (s.smsWindow.count >= 10) return;
   s.smsWindow.count += 1;
   const prefix = alert.type === "sim_change" ? "SIM CHANGE" : "DEVICE ONLINE";
-  sendSms(s.ownerPhone, `[TrackNaija] ${prefix}: ${alert.body}`)
+  sendSms(s.ownerPhone, `[Dravex] ${prefix}: ${alert.body}`)
     .then((result) => {
       s.smsLastSentAt = new Date().toISOString();
       s.smsLastResult = result;
@@ -287,6 +295,127 @@ function readBody(req) {
   });
 }
 
+/* ---------------- stolen-device registry ---------------- */
+
+/**
+ * Dravex Device Check — the buyer-protection registry.
+ *
+ * When an owner marks a device LOST, a public entry is created keyed by IMEI
+ * (phones) or serial number (laptops). Anyone can query it at GET /api/check
+ * — no auth, and NEVER any owner, deviceId or location details. Resolved
+ * entries (owner recovered the device) come back as "clean" so honest
+ * sellers aren't flagged by an old report.
+ */
+function syncRegistry(dev) {
+  store.stolen = store.stolen || [];
+  let entry = store.stolen.find((e) => e.deviceId === dev.deviceId);
+  if (dev.lost) {
+    if (!entry) {
+      store.stolen.push({
+        id: randomUUID(),
+        deviceId: dev.deviceId,
+        type: deviceType(dev),
+        imei: dev.imei || null,
+        serialNumber: dev.serialNumber || null,
+        label: dev.hostname || "A device",
+        status: "reported",
+        reportedAt: new Date().toISOString(),
+        resolvedAt: null,
+      });
+    } else {
+      entry.status = "reported";
+      entry.resolvedAt = null;
+      if (dev.imei) entry.imei = dev.imei;
+      if (dev.serialNumber) entry.serialNumber = dev.serialNumber;
+      if (dev.hostname) entry.label = dev.hostname;
+    }
+  } else {
+    // Owner says found: resolve EVERY active report on this physical device's
+    // identifiers (IMEI/serial are unique per device). A recovered device must
+    // read clean again — a stale duplicate report must never keep it flagged.
+    const mine = [dev.imei, dev.serialNumber].filter(Boolean);
+    const now = new Date().toISOString();
+    (store.stolen || []).forEach((e) => {
+      if (e.status !== "reported") return;
+      if ((e.imei && mine.includes(e.imei)) || (e.serialNumber && mine.includes(e.serialNumber))) {
+        e.status = "resolved";
+        e.resolvedAt = now;
+      }
+    });
+  }
+}
+
+/**
+ * Match a public check query (IMEI digits or serial alphanumerics).
+ * An ACTIVE report always wins over a resolved one for the same identifier —
+ * buyers must see the live stolen listing even if an older report for that
+ * serial/IMEI was resolved by a previous owner or a re-run.
+ */
+function registryLookup(query) {
+  const digits = String(query || "").replace(/\D/g, "");
+  const alpha = String(query || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  const hits = (store.stolen || []).filter(
+    (e) =>
+      (e.imei && e.imei.replace(/\D/g, "") === digits) ||
+      (e.serialNumber && e.serialNumber.replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === alpha),
+  );
+  return hits.find((e) => e.status === "reported") || hits[0] || null;
+}
+
+/**
+ * Public verdict. NEVER exposes owner data: the label is a generic type label
+ * ("A phone"/"A laptop") — an owner's hostname (e.g. "Ada-MacBook-Pro") must
+ * never be readable by anyone who checks an IMEI.
+ */
+function registryVerdict(entry) {
+  const genericLabel = entry ? (entry.type === "phone" ? "A phone" : "A laptop") : null;
+  if (entry && entry.status === "reported") {
+    return {
+      found: true,
+      status: "reported_stolen",
+      type: entry.type,
+      label: genericLabel,
+      reportedAt: entry.reportedAt,
+      message:
+        "This device is listed in the Dravex stolen-device registry. Do not buy it — report it to the nearest police station.",
+    };
+  }
+  return {
+    found: false,
+    status: "clean",
+    type: entry ? entry.type : null,
+    label: genericLabel,
+    previouslyReported: !!entry,
+    message: entry
+      ? "No active stolen report for this device (a past report was resolved by the owner)."
+      : "No stolen-device report found for this IMEI/serial. Ask for the original receipt and verify it powers on without a lock.",
+  };
+}
+
+/*
+ * Public-check rate limit (30/min per IP, in-memory): /api/check is a
+ * deliberately open oracle, so a simple limiter stops registry enumeration
+ * (repeated queries differing by reported-vs-clean). Not a security boundary
+ * — it's friction, and Phase-2 auth will replace it.
+ */
+const checkHits = new Map();
+function checkRateLimited(ip) {
+  const now = Date.now();
+  if (checkHits.size > 500) {
+    for (const [k, v] of checkHits) {
+      if (!v.some((t) => now - t < 60_000)) checkHits.delete(k);
+    }
+  }
+  const recent = (checkHits.get(ip) || []).filter((t) => now - t < 60_000);
+  if (recent.length >= 30) {
+    checkHits.set(ip, recent);
+    return true;
+  }
+  recent.push(now);
+  checkHits.set(ip, recent);
+  return false;
+}
+
 /* ---------------- routes ---------------- */
 
 async function route(req, res) {
@@ -304,6 +433,21 @@ async function route(req, res) {
       mode: storage.mode,
       time: new Date().toISOString(),
     });
+  }
+
+  // GET /api/check?imei=… | ?serial=… | ?q=… — public Dravex Device Check.
+  // Buyer protection: query the stolen registry before buying a used phone or
+  // laptop. Returns a verdict ONLY — never owner, deviceId or location data.
+  if (!isPost && url.pathname === "/api/check") {
+    if (checkRateLimited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many checks — try again in a minute." });
+    }
+    const q = url.searchParams.get("q") || url.searchParams.get("imei") || url.searchParams.get("serial") || "";
+    const cleaned = String(q).replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    if (cleaned.length < 6) {
+      return json(res, 400, { error: "Enter a valid IMEI or serial number (at least 6 characters)." });
+    }
+    return json(res, 200, registryVerdict(registryLookup(cleaned)));
   }
 
   // GET /api/alerts/latest?since=<iso> → { alerts: [...recent], unreadCount }
@@ -400,7 +544,7 @@ async function route(req, res) {
     }
     const result = await sendSms(
       owner,
-      "[TrackNaija] Test SMS — SMS alerts are working. You will be texted here if a device reconnects or its SIM changes.",
+      "[Dravex] Test SMS — SMS alerts are working. You will be texted here if a device reconnects or its SIM changes.",
     );
     store.settings.smsLastSentAt = new Date().toISOString();
     store.settings.smsLastResult = result;
@@ -409,7 +553,7 @@ async function route(req, res) {
   }
 
   // POST /api/sightings { beacon, lat, lng, accuracy, at? } — the community
-  // BLE relay: any TrackNaija phone that hears a device's beacon reports it
+  // BLE relay: any Dravex phone that hears a device's beacon reports it
   // here with the SCANNER's GPS position. Anonymous (the scanner may be any
   // user's phone) — always answer 201 so nobody can probe which beacons exist.
   if (isPost && url.pathname === "/api/sightings") {
@@ -437,8 +581,8 @@ async function route(req, res) {
     const body = await readBody(req);
     const deviceId = randomUUID();
     const code = body.label
-      ? `TN-${body.label.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6)}-${Math.floor(1000 + Math.random() * 9000)}`
-      : `TN-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
+      ? `DX-${body.label.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6)}-${Math.floor(1000 + Math.random() * 9000)}`
+      : `DX-${Math.floor(1000 + Math.random() * 9000)}-${Math.floor(1000 + Math.random() * 9000)}`;
     store.pairCodes[code] = deviceId;
     device(deviceId);
     saveStore();
@@ -560,16 +704,47 @@ async function route(req, res) {
     if (action === "lost" && isPost) {
       const body = await readBody(req);
       dev.lost = !!body.lost;
+      if (dev.lost) {
+        // Recovery code for the app-level ownership check: accept an owner-set
+        // 4-8 digit PIN, otherwise generate one — the dashboard shows it so
+        // the owner can unlock the app if the phone comes back to them.
+        if (body.recoveryCode !== undefined) {
+          const code = String(body.recoveryCode).replace(/\D/g, "").slice(0, 8);
+          if (code.length >= 4) dev.recoveryCode = code;
+        }
+        if (!dev.recoveryCode) dev.recoveryCode = String(Math.floor(100000 + Math.random() * 900000));
+        dev.events.push({
+          type: "lost",
+          at: new Date().toISOString(),
+          detail: { recoveryCode: !!dev.recoveryCode },
+        });
+        raiseAlert(
+          "stolen",
+          dev,
+          `${dev.hostname || "A device"} was reported lost — community beacon armed. Nearby Dravex devices will now detect it.`,
+        );
+      } else {
+        dev.recoveryCode = null;
+        dev.events.push({ type: "found", at: new Date().toISOString() });
+        raiseAlert("found", dev, `${dev.hostname || "A device"} was marked found.`);
+      }
       if (!dev.commands.some((c) => c.type === (dev.lost ? "lost" : "found") && !c.executedAt)) {
         dev.commands.push({
           id: randomUUID(),
           type: dev.lost ? "lost" : "found",
           createdAt: new Date().toISOString(),
           executedAt: null,
+          payload: dev.lost && dev.recoveryCode ? { recoveryCode: dev.recoveryCode } : undefined,
         });
       }
+      // Feed the buyer-protection registry (IMEI / serial lookup).
+      syncRegistry(dev);
       saveStore();
-      return json(res, 200, { ok: true, lost: dev.lost });
+      return json(res, 200, {
+        ok: true,
+        lost: dev.lost,
+        recoveryCode: dev.lost ? dev.recoveryCode : null,
+      });
     }
 
     // GET /api/devices/:id/sightings — community BLE sightings, newest first.
@@ -688,9 +863,9 @@ async function boot() {
       process.exit(1);
     }
   }
-  console.log(`TrackNaija sync server: storage = ${storage.describe()}`);
+  console.log(`Dravex sync server: storage = ${storage.describe()}`);
   server.listen(PORT, HOST, () => {
-    console.log(`TrackNaija sync server listening on http://${HOST}:${PORT}`);
+    console.log(`Dravex sync server listening on http://${HOST}:${PORT}`);
   });
 }
 

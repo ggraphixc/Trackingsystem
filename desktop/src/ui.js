@@ -19,9 +19,9 @@ function createWindow() {
     height: 720,
     minWidth: 760,
     minHeight: 560,
-    title: "TrackNaija Agent",
+    title: "Dravex Agent",
     autoHideMenuBar: true,
-    icon: path.join(__dirname, "../assets/tracknaija.png"),
+    icon: path.join(__dirname, "../assets/dravex.png"),
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -44,12 +44,12 @@ function createTray({ lostMode, onToggleLost: toggle }) {
   trayState.lostMode = !!lostMode;
   onToggleLost = toggle;
 
-  const iconPath = path.join(__dirname, "../assets/tracknaija.png");
+  const iconPath = path.join(__dirname, "../assets/dravex.png");
   const icon = fs.existsSync(iconPath)
     ? nativeImage.createFromPath(iconPath)
     : nativeImage.createEmpty();
   tray = new Tray(icon.resize({ width: 16, height: 16 }));
-  tray.setToolTip("TrackNaija Agent — your laptop is protected");
+  tray.setToolTip("Dravex Agent — your laptop is protected");
   rebuildTrayMenu();
   tray.on("click", openAgent);
 }
@@ -64,7 +64,7 @@ function rebuildTrayMenu() {
   if (!tray) return;
   const menu = Menu.buildFromTemplate([
     {
-      label: "Open TrackNaija",
+      label: "Open Dravex",
       click: () => openAgent(),
     },
     {

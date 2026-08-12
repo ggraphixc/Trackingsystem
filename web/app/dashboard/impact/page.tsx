@@ -45,7 +45,7 @@ export default function ImpactPage() {
       <div className="mt-8 grid gap-6 lg:grid-cols-3">
         <Card className="p-6 lg:col-span-2">
           <h2 className="mb-1 text-base font-semibold text-ink">Community milestones</h2>
-          <p className="mb-5 text-sm text-ink-muted">TrackNaija users together, heading to these goals.</p>
+          <p className="mb-5 text-sm text-ink-muted">Dravex users together, heading to these goals.</p>
           <div className="space-y-6">
             {milestones.map((m) => (
               <div key={m.label}>

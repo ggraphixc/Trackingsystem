@@ -68,6 +68,25 @@ export default function OverviewPage() {
       {/* Reconnect banner + device activity (shared with the Agents page) */}
       <DeviceAlerts devices={paired} />
 
+      {/* Active recovery incidents — lost devices need eyes on them */}
+      {paired.some((d) => d.lost) ? (
+        <Link
+          href="/dashboard/recovery"
+          className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm transition-colors duration-200 hover:border-red-300 hover:bg-red-100/70"
+        >
+          <span className="flex items-center gap-2.5 font-semibold text-red-700">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-60" />
+              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-600" />
+            </span>
+            {paired.filter((d) => d.lost).length} device{paired.filter((d) => d.lost).length === 1 ? "" : "s"} in
+            recovery mode — {paired.filter((d) => d.lost)[0].hostname ?? "a device"}
+            {paired.filter((d) => d.lost).length > 1 ? " and more" : ""}
+          </span>
+          <span className="font-medium text-red-700">Open recovery view →</span>
+        </Link>
+      ) : null}
+
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <StatCard
           label="Devices protected"

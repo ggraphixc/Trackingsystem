@@ -1,4 +1,4 @@
-# Signing the TrackNaija Windows installer
+# Signing the Dravex Windows installer
 
 The installer builds **unsigned** by default. Windows will show a
 "Unknown publisher" / SmartScreen warning until it is signed with a trusted
@@ -36,7 +36,7 @@ elevation helper with signtool automatically.
 
 ```bash
 # From a Windows SDK prompt
-signtool verify /pa /v "dist/TrackNaija Agent Setup 0.2.0.exe"
+signtool verify /pa /v "dist/Dravex Agent Setup 0.2.0.exe"
 ```
 
 ## Alternative: sign the built exe afterwards
@@ -45,7 +45,7 @@ If you prefer to sign outside electron-builder:
 
 ```bash
 # From a Windows SDK prompt (adjust arch)
-signtool sign /f certificate.pfx /p YOUR_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 /a "dist/TrackNaija Agent Setup 0.2.0.exe"
+signtool sign /f certificate.pfx /p YOUR_PASSWORD /tr http://timestamp.digicert.com /td sha256 /fd sha256 /a "dist/Dravex Agent Setup 0.2.0.exe"
 ```
 
 ## Current status

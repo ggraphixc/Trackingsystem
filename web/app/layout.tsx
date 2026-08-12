@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "TrackNaija — Lost Phone Tracking & Recovery for Nigeria",
+  title: "Dravex — Lost Phone Tracking & Recovery for Nigeria",
   description:
     "Protect your phone before it's lost. If it's stolen, recover it: GPS tracking, police & carrier IMEI blacklisting facilitation, community sightings, and sustainability impact.",
   keywords: [
