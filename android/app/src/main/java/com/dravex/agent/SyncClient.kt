@@ -12,7 +12,7 @@ import java.net.URL
  * Uses HttpURLConnection + org.json — no extra HTTP dependencies.
  * All methods return null/empty on failure so tracking never crashes offline.
  */
-class SyncClient(private val serverUrl: String) {
+class SyncClient(private val serverUrl: String, private val deviceToken: String? = null) {
 
     private fun base(): String = serverUrl.trimEnd('/')
 
@@ -24,6 +24,9 @@ class SyncClient(private val serverUrl: String) {
                 conn.connectTimeout = 6000
                 conn.readTimeout = 6000
                 conn.setRequestProperty("Content-Type", "application/json")
+                if (deviceToken != null) {
+                    conn.setRequestProperty("Authorization", "Bearer $deviceToken")
+                }
                 if (body != null) {
                     conn.doOutput = true
                     conn.outputStream.use { it.write(body.toString().toByteArray()) }
@@ -90,6 +93,16 @@ class SyncClient(private val serverUrl: String) {
     suspend fun postSighting(sighting: JSONObject): Boolean =
         request("POST", "/api/sightings", sighting) != null
 
+    /**
+     * Public Dravex Device Check — query the stolen-device registry by IMEI
+     * or serial. Useful on a fresh install (post-flash): the new user can
+     * check whether this phone was reported stolen before trusting it.
+     */
+    suspend fun checkRegistry(query: String): JSONObject? {
+        val q = java.net.URLEncoder.encode(query.trim(), "UTF-8")
+        return request("GET", "/api/check?q=$q", null)
+    }
+
     /** Same as [request] but for endpoints that return a JSON *array* (GET /commands). */
     private suspend fun requestArray(method: String, path: String): JSONArray? =
         withContext(Dispatchers.IO) {
@@ -99,6 +112,9 @@ class SyncClient(private val serverUrl: String) {
                 conn.connectTimeout = 6000
                 conn.readTimeout = 6000
                 conn.setRequestProperty("Content-Type", "application/json")
+                if (deviceToken != null) {
+                    conn.setRequestProperty("Authorization", "Bearer $deviceToken")
+                }
                 val code = conn.responseCode
                 if (code !in 200..299) {
                     conn.disconnect()

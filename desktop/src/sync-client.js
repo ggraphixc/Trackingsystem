@@ -5,22 +5,41 @@
 class SyncClient {
   constructor(serverUrl) {
     this.serverUrl = String(serverUrl || "").replace(/\/+$/, "");
+    this.ownerKey = null; // DRAVEX_OWNER_KEY — owner-scoped calls
+    this.deviceToken = null; // issued at claim — device-scoped calls
   }
 
   get configured() {
     return this.serverUrl.startsWith("http");
   }
 
-  async _req(method, path, body) {
+  /** Owner credential (needed only when the server sets DRAVEX_OWNER_KEY). */
+  setOwnerKey(key) {
+    this.ownerKey = key ? String(key).trim() : null;
+    return this;
+  }
+
+  /** Agent credential returned by /api/pair/claim. */
+  setDeviceToken(token) {
+    this.deviceToken = token ? String(token).trim() : null;
+    return this;
+  }
+
+  async _req(method, path, body, opts = {}) {
     if (!this.configured) return null;
+    // opts.auth: "owner" | "device" | "none" (default "owner" for reads).
+    const auth = opts.auth || "owner";
+    const token = auth === "device" ? this.deviceToken : auth === "owner" ? this.ownerKey : null;
     // Manual timeout (AbortController + clearTimeout) so no timers linger
     // after the request — avoids Node/Windows shutdown crashes and leaks.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6000);
     try {
+      const headers = { "Content-Type": "application/json" };
+      if (token) headers.Authorization = `Bearer ${token}`;
       const res = await fetch(this.serverUrl + path, {
         method,
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: body ? JSON.stringify(body) : undefined,
         signal: controller.signal,
       });
@@ -39,43 +58,63 @@ class SyncClient {
 
   /** Agent claims a pairing code issued by the dashboard. */
   async claim(code, info) {
-    return this._req("POST", "/api/pair/claim", {
-      code: String(code || "").trim().toUpperCase(),
-      hostname: info.hostname,
-      serialNumber: info.serialNumber,
-      platform: info.platform,
-    });
+    return this._req(
+      "POST",
+      "/api/pair/claim",
+      {
+        code: String(code || "").trim().toUpperCase(),
+        hostname: info.hostname,
+        serialNumber: info.serialNumber,
+        platform: info.platform,
+      },
+      { auth: "none" },
+    );
   }
 
   async postFix(deviceId, fix) {
-    return this._req("POST", `/api/devices/${deviceId}/fixes`, { fix });
+    return this._req("POST", `/api/devices/${deviceId}/fixes`, { fix }, { auth: "device" });
   }
 
   async postEvidence(deviceId, dataUrl) {
-    return this._req("POST", `/api/devices/${deviceId}/evidence`, {
-      dataUrl,
-      capturedAt: new Date().toISOString(),
-    });
+    return this._req(
+      "POST",
+      `/api/devices/${deviceId}/evidence`,
+      {
+        dataUrl,
+        capturedAt: new Date().toISOString(),
+      },
+      { auth: "device" },
+    );
   }
 
   async getCommands(deviceId, afterId) {
     const q = afterId ? `?after=${encodeURIComponent(afterId)}` : "";
-    return this._req("GET", `/api/devices/${deviceId}/commands${q}`);
+    return this._req("GET", `/api/devices/${deviceId}/commands${q}`, null, { auth: "device" });
   }
 
   async ackCommand(deviceId, commandId) {
-    return this._req("POST", `/api/devices/${deviceId}/commands/${commandId}/ack`);
+    return this._req(
+      "POST",
+      `/api/devices/${deviceId}/commands/${commandId}/ack`,
+      {},
+      { auth: "device" },
+    );
   }
 
   /** Offline-vault burst sync: true only when the server accepted EVERY item. */
   async postBatch(deviceId, items) {
-    const res = await this._req("POST", `/api/devices/${deviceId}/batch`, { items });
+    const res = await this._req(
+      "POST",
+      `/api/devices/${deviceId}/batch`,
+      { items },
+      { auth: "device" },
+    );
     return !!res && res.ok === true && res.failed === 0;
   }
 
   /** Report a device event (e.g. sim_change — desktop sends reconnects). */
   async postEvent(deviceId, event) {
-    return this._req("POST", `/api/devices/${deviceId}/events`, { event });
+    return this._req("POST", `/api/devices/${deviceId}/events`, { event }, { auth: "device" });
   }
 
   /** Latest owner alerts (reconnects + SIM changes) for the agent UI. */
@@ -85,7 +124,7 @@ class SyncClient {
 
   /** Community relay: report a heard BLE beacon with this machine's position. */
   async postSighting(sighting) {
-    return this._req("POST", "/api/sightings", sighting);
+    return this._req("POST", "/api/sightings", sighting, { auth: "none" });
   }
 
   /** Mark a device lost (activates community beacon alerts) / found. */

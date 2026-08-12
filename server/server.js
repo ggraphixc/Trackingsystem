@@ -22,8 +22,12 @@
  *   POST /api/settings          dashboard → save owner phone + enable SMS
  *   POST /api/sms/test          dashboard → send a test SMS to the owner
  *   GET  /api/check             public    → stolen-device check (IMEI/serial)
+ *   POST /api/devices/:id/token owner    → rotate an agent's credential
  *
- * Security status (Phase 1): the API is intentionally unauthenticated so the
+ * Security status: optional auth via DRAVEX_OWNER_KEY — when set, owner
+ * endpoints need `Authorization: Bearer <key>` and agent endpoints need the
+ * per-device token issued at claim. Without the env var, the API stays open
+ * (Phase-1 zero-config default). The pairing code and deviceId are the
  * agents and the public check can work with zero setup. The pairing code and
  * deviceId are the de-facto secrets. That means anyone who can reach the API
  * can also read the recoveryCode returned by POST /lost or delivered in the
@@ -39,7 +43,7 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { randomUUID } = require("crypto");
+const { randomUUID, randomBytes } = require("crypto");
 const { createStorage } = require("./storage");
 const { getVapidKeys, notifyAll } = require("./push");
 const { maskPhone, normalizePhone, sendSms, smsStatus } = require("./sms");
@@ -129,6 +133,8 @@ function device(id) {
       serialNumber: null,
       imei: null, // phones only (laptops have serial numbers instead)
       platform: null,
+      token: randomBytes(24).toString("hex"), // agent credential (claim returns it)
+      staticBeacon: null, // Dravex Tag hardware: fixed 12-hex beacon id
       pairedAt: null,
       lastSeenAt: null,
       reconnectedAt: null,
@@ -264,12 +270,45 @@ function smsNotify(store, alert) {
 function cors(res) {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
+  // Authorization must be allowed: the web dashboard sends `Bearer <owner
+  // key>` cross-origin, which otherwise fails the CORS preflight.
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
 }
 
 function json(res, status, body) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
+}
+
+/* ---------------- optional auth (Phase 2-lite) ---------------- */
+
+/**
+ * When DRAVEX_OWNER_KEY is NOT set, everything stays open (Phase-1 default —
+ * zero-config agents + dashboards). When it IS set:
+ *   - owner endpoints (devices list, mark-lost, alerts, settings, command
+ *     queue, evidence/sightings/fixes reads) require
+ *     `Authorization: Bearer <DRAVEX_OWNER_KEY>`
+ *   - device endpoints (fix/evidence/event upload, command poll/ack) require
+ *     `Authorization: Bearer <deviceToken>` — issued at claim, rotate via
+ *     POST /api/devices/:id/token
+ * /api/health, /api/check, POST /api/sightings and POST /api/pair/claim stay
+ * public (the single-use pairing code is the claim credential).
+ */
+const OWNER_KEY = process.env.DRAVEX_OWNER_KEY || "";
+
+function bearer(req) {
+  const h = req.headers.authorization || "";
+  return h.startsWith("Bearer ") ? h.slice(7).trim() : "";
+}
+function ownerOk(req) {
+  return !OWNER_KEY || bearer(req) === OWNER_KEY;
+}
+function deviceOk(req, dev) {
+  if (!OWNER_KEY) return true;
+  return !!dev.token && bearer(req) === dev.token;
+}
+function ownerOrDeviceOk(req, dev) {
+  return ownerOk(req) || deviceOk(req, dev);
 }
 
 function readBody(req) {
@@ -452,6 +491,7 @@ async function route(req, res) {
 
   // GET /api/alerts/latest?since=<iso> → { alerts: [...recent], unreadCount }
   if (!isPost && url.pathname === "/api/alerts/latest") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
     const since = url.searchParams.get("since");
     let alerts = [...(store.alerts || [])].reverse().slice(0, 20);
     if (since) alerts = alerts.filter((a) => a.at > since);
@@ -463,6 +503,7 @@ async function route(req, res) {
 
   // POST /api/alerts/read { id } | { all: true }
   if (isPost && url.pathname === "/api/alerts/read") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
     const body = await readBody(req);
     if (body.all) {
       (store.alerts || []).forEach((a) => (a.read = true));
@@ -476,12 +517,14 @@ async function route(req, res) {
 
   // GET /api/push/vapid-key → { publicKey } (base64url raw P-256 point)
   if (!isPost && url.pathname === "/api/push/vapid-key") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
     const keys = getVapidKeys(store, saveStore);
     return json(res, 200, { publicKey: keys.publicKey });
   }
 
   // POST /api/push/subscribe { subscription: PushSubscriptionJSON }
   if (isPost && url.pathname === "/api/push/subscribe") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
     const body = await readBody(req);
     const sub = body.subscription;
     if (!sub || typeof sub.endpoint !== "string" || !sub.keys) {
@@ -500,6 +543,7 @@ async function route(req, res) {
 
   // POST /api/push/test → ping every subscription, report per-endpoint result
   if (isPost && url.pathname === "/api/push/test") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
     const results = await notifyAll(store, saveStore);
     return json(res, 200, { ok: true, results });
   }
@@ -508,6 +552,7 @@ async function route(req, res) {
   // The phone number is returned MASKED — this endpoint is unauthenticated
   // and the server binds 0.0.0.0 in production.
   if (!isPost && url.pathname === "/api/settings") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
     return json(res, 200, {
       ownerPhone: maskPhone(store.settings.ownerPhone),
       smsEnabled: store.settings.smsEnabled !== false,
@@ -517,6 +562,7 @@ async function route(req, res) {
 
   // POST /api/settings { ownerPhone?, smsEnabled? } → save + return config
   if (isPost && url.pathname === "/api/settings") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
     const body = await readBody(req);
     if (body.ownerPhone !== undefined) {
       const normalized = normalizePhone(String(body.ownerPhone));
@@ -538,6 +584,7 @@ async function route(req, res) {
 
   // POST /api/sms/test → text the owner now (log mode until a provider is set)
   if (isPost && url.pathname === "/api/sms/test") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
     const owner = store.settings.ownerPhone;
     if (!owner) {
       return json(res, 400, { error: "Set your phone number first — POST /api/settings { ownerPhone }." });
@@ -578,6 +625,7 @@ async function route(req, res) {
 
   // POST /api/pair/register { label } → { code, deviceId }
   if (isPost && parts.join("/") === "api/pair/register") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
     const body = await readBody(req);
     const deviceId = randomUUID();
     const code = body.label
@@ -589,7 +637,10 @@ async function route(req, res) {
     return json(res, 201, { code, deviceId });
   }
 
-  // POST /api/pair/claim { code, hostname, serialNumber, platform } → { deviceId }
+  // POST /api/pair/claim { code, hostname, serialNumber, platform, staticBeacon? }
+  // → { deviceId, token }. The pairing code is the credential; the returned
+  // token authenticates the agent's device-scoped calls once DRAVEX_OWNER_KEY
+  // is set. A Dravex Tag can claim with its fixed 12-hex staticBeacon id.
   if (isPost && parts.join("/") === "api/pair/claim") {
     const body = await readBody(req);
     const deviceId = store.pairCodes[body.code];
@@ -599,15 +650,18 @@ async function route(req, res) {
     dev.serialNumber = body.serialNumber || dev.serialNumber;
     dev.imei = body.imei || dev.imei;
     dev.platform = body.platform || dev.platform;
+    const sb = String(body.staticBeacon || "").toLowerCase();
+    if (/^[0-9a-f]{12}$/.test(sb)) dev.staticBeacon = sb;
     dev.pairedAt = dev.pairedAt || new Date().toISOString();
     dev.lastSeenAt = new Date().toISOString();
     delete store.pairCodes[body.code]; // single use
     saveStore();
-    return json(res, 200, { deviceId });
+    return json(res, 200, { deviceId, token: dev.token });
   }
 
   // GET /api/devices
   if (!isPost && parts.join("/") === "api/devices") {
+    if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
     const list = Object.values(store.devices).map((d) => ({
       deviceId: d.deviceId,
       hostname: d.hostname,
@@ -637,12 +691,14 @@ async function route(req, res) {
 
     if (action === "fixes") {
       if (isPost) {
+        if (!deviceOk(req, dev)) return json(res, 401, { error: "Device token required." });
         const body = await readBody(req);
         if (!body.fix) return json(res, 400, { error: "Missing fix." });
         storeFix(dev, body.fix);
         saveStore();
         return json(res, 201, { ok: true });
       }
+      if (!ownerOrDeviceOk(req, dev)) return json(res, 401, { error: "Owner key or device token required." });
       const limit = Math.min(100, parseInt(url.searchParams.get("limit") || "10", 10));
       return json(res, 200, dev.fixes.slice(-limit).reverse());
     }
@@ -651,6 +707,7 @@ async function route(req, res) {
     // the agent's offline-vault burst sync (one call, many items).
     if (action === "batch") {
       if (isPost) {
+        if (!deviceOk(req, dev)) return json(res, 401, { error: "Device token required." });
         const body = await readBody(req);
         const items = Array.isArray(body.items) ? body.items.slice(0, 100) : [];
         let received = 0;
@@ -687,6 +744,7 @@ async function route(req, res) {
     // reconnects and other device lifecycle signals.
     if (action === "events") {
       if (isPost) {
+        if (!deviceOk(req, dev)) return json(res, 401, { error: "Device token required." });
         const body = await readBody(req);
         const ev = body.event;
         if (!ev || typeof ev.type !== "string") return json(res, 400, { error: "Missing event." });
@@ -694,6 +752,7 @@ async function route(req, res) {
         saveStore();
         return json(res, 201, { ok: true });
       }
+      if (!ownerOrDeviceOk(req, dev)) return json(res, 401, { error: "Owner key or device token required." });
       return json(res, 200, [...(dev.events || [])].reverse());
     }
 
@@ -702,6 +761,7 @@ async function route(req, res) {
     // command so the phone agent arms/disarms its community beacon itself —
     // the beacon is only ever broadcast while lost (privacy-first).
     if (action === "lost" && isPost) {
+      if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
       const body = await readBody(req);
       dev.lost = !!body.lost;
       if (dev.lost) {
@@ -749,11 +809,13 @@ async function route(req, res) {
 
     // GET /api/devices/:id/sightings — community BLE sightings, newest first.
     if (action === "sightings" && !isPost) {
+      if (!ownerOrDeviceOk(req, dev)) return json(res, 401, { error: "Owner key or device token required." });
       return json(res, 200, [...(dev.sightings || [])].reverse());
     }
 
     if (action === "evidence") {
       if (isPost) {
+        if (!deviceOk(req, dev)) return json(res, 401, { error: "Device token required." });
         const body = await readBody(req);
         if (typeof body.dataUrl !== "string" || !body.dataUrl.startsWith("data:image/")) {
           return json(res, 400, { error: "Evidence must be a data:image/ URL." });
@@ -768,6 +830,7 @@ async function route(req, res) {
         saveStore();
         return json(res, 201, { ok: true });
       }
+      if (!ownerOrDeviceOk(req, dev)) return json(res, 401, { error: "Owner key or device token required." });
       return json(res, 200, [...dev.evidence].reverse());
     }
 
@@ -775,6 +838,7 @@ async function route(req, res) {
       // POST /api/devices/:id/commands/:cid/ack — agent confirms execution.
       // Must be checked before the generic commands handler below.
       if (isPost && parts[4] && parts[5] === "ack") {
+        if (!deviceOk(req, dev)) return json(res, 401, { error: "Device token required." });
         const cmd = dev.commands.find((c) => c.id === parts[4]);
         if (!cmd) return json(res, 404, { error: "Command not found." });
         cmd.executedAt = new Date().toISOString();
@@ -783,6 +847,7 @@ async function route(req, res) {
       }
 
       if (isPost) {
+        if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
         const body = await readBody(req);
         const type = ["lock", "alarm", "webcam"].includes(body.type) ? body.type : null;
         if (!type) return json(res, 400, { error: "Invalid command type." });
@@ -796,6 +861,7 @@ async function route(req, res) {
         return json(res, 201, { ok: true, id: dev.commands[dev.commands.length - 1].id });
       }
       // Agent polls with ?after=<commandId> to get only newer commands.
+      if (!deviceOk(req, dev)) return json(res, 401, { error: "Device token required." });
       const after = url.searchParams.get("after");
       let pending = dev.commands.filter((c) => !c.executedAt);
       if (after) {
@@ -805,7 +871,18 @@ async function route(req, res) {
       return json(res, 200, pending);
     }
 
+    // POST /api/devices/:id/token — owner rotates the agent credential.
+    // Needed when enabling auth on a store that has pre-auth devices (their
+    // tokens were minted at creation but never delivered to the agent).
+    if (action === "token" && isPost) {
+      if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
+      dev.token = randomBytes(24).toString("hex");
+      saveStore();
+      return json(res, 200, { ok: true, token: dev.token });
+    }
+
     if (!isPost && !action) {
+      if (!ownerOrDeviceOk(req, dev)) return json(res, 401, { error: "Owner key or device token required." });
       return json(res, 200, {
         deviceId: dev.deviceId,
         hostname: dev.hostname,

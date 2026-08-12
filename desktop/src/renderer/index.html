@@ -23,7 +23,7 @@
       <aside class="sidebar">
         <div class="brand">
           <span class="brand-mark" aria-hidden="true"></span>
-          <span class="brand-name">Track<span class="brand-accent">Naija</span></span>
+          <span class="brand-name">Drav<span class="brand-accent">ex</span></span>
           <span class="brand-sub">Tracking dashboard</span>
         </div>
 
@@ -315,13 +315,28 @@
               </p>
               <div class="link-row">
                 <input id="server-url" class="input mono" value="http://localhost:4173" aria-label="Sync server URL" />
-                <input id="pair-code" class="input mono" placeholder="Pairing code, e.g. TN-1234-5678" aria-label="Pairing code" />
+                <input id="pair-code" class="input mono" placeholder="Pairing code, e.g. DX-1234-5678" aria-label="Pairing code" />
               </div>
               <div class="btn-grid">
                 <button id="btn-server" class="btn btn-ghost">Test server</button>
                 <button id="btn-link" class="btn btn-secondary">Link agent</button>
               </div>
               <p id="link-note" class="meta"></p>
+
+              <div class="link-row">
+                <input
+                  id="owner-key"
+                  class="input mono"
+                  type="password"
+                  placeholder="Owner key (optional)"
+                  aria-label="Owner key"
+                />
+                <button id="btn-save-owner-key" class="btn btn-ghost btn-sm">Save</button>
+              </div>
+              <p id="owner-key-note" class="meta">
+                Only needed if your server enables DRAVEX_OWNER_KEY auth — it unlocks the owner-only views
+                (Devices, Map, Alerts). Stored on this machine only.
+              </p>
             </section>
 
             <section class="card">

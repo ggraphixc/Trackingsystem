@@ -157,10 +157,12 @@ class MainActivity : AppCompatActivity() {
                     "android",
                 )
                 val deviceId = res?.optString("deviceId", null)
+                val token = res?.optString("token", null)
                 runOnUiThread {
                     binding.linkButton.isEnabled = true
                     if (deviceId != null) {
                         state.deviceId = deviceId
+                        state.deviceToken = token?.takeIf { it.isNotBlank() }
                         state.pairedAt = java.time.Instant.now().toString()
                         Toast.makeText(this@MainActivity, R.string.linked_ok, Toast.LENGTH_SHORT).show()
                         renderState()
@@ -181,6 +183,29 @@ class MainActivity : AppCompatActivity() {
             renderState()
         }
 
+        binding.deviceCheckButton.setOnClickListener {
+            val q = binding.imeiInput.text.toString().trim()
+            if (q.length < 6) {
+                Toast.makeText(this, R.string.check_imei_short, Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            binding.deviceCheckResult.text = getString(R.string.checking_registry)
+            scope.launch {
+                val res = SyncClient(state.serverUrl, state.deviceToken).checkRegistry(q)
+                runOnUiThread {
+                    if (res == null) {
+                        binding.deviceCheckResult.text = getString(R.string.registry_unreachable)
+                    } else if (res.optBoolean("found", false)) {
+                        binding.deviceCheckResult.text = getString(R.string.registry_stolen)
+                        binding.deviceCheckResult.setTextColor(0xFFDC2626.toInt())
+                    } else {
+                        binding.deviceCheckResult.text = getString(R.string.registry_clean)
+                        binding.deviceCheckResult.setTextColor(0xFF059669.toInt())
+                    }
+                }
+            }
+        }
+
         binding.webcamButton.setOnClickListener {
             CommandHandler.captureWebcam(this) { dataUrl ->
                 runOnUiThread {
@@ -190,7 +215,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     binding.webcamPreview.setImageBitmap(decodeDataUrl(dataUrl))
                     state.deviceId?.let { id ->
-                        scope.launch { SyncClient(state.serverUrl).postEvidence(id, dataUrl) }
+                        scope.launch { SyncClient(state.serverUrl, state.deviceToken).postEvidence(id, dataUrl) }
                     }
                     Toast.makeText(this, R.string.captured, Toast.LENGTH_SHORT).show()
                 }

@@ -95,11 +95,39 @@ export interface PairingResult {
   deviceId: string;
 }
 
+const OWNER_KEY_STORAGE = "dravex_owner_key";
+
+/**
+ * Owner key for servers that enable DRAVEX_OWNER_KEY auth. Stored in
+ * localStorage on this browser only; empty string = auth off (Phase-1 mode).
+ */
+export function getOwnerKey(): string {
+  try {
+    return typeof localStorage === "undefined" ? "" : (localStorage.getItem(OWNER_KEY_STORAGE) || "");
+  } catch {
+    return "";
+  }
+}
+
+export function setOwnerKey(key: string): void {
+  try {
+    if (key) localStorage.setItem(OWNER_KEY_STORAGE, key);
+    else localStorage.removeItem(OWNER_KEY_STORAGE);
+  } catch {
+    /* private mode — auth simply won't attach */
+  }
+}
+
 async function req<T>(path: string, body?: unknown): Promise<T | null> {
   try {
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
+    // The dashboard is owner-side: attach the owner key when one is set.
+    // Public endpoints (/api/check, /api/health) ignore it.
+    const key = getOwnerKey();
+    if (key) headers.Authorization = `Bearer ${key}`;
     const res = await fetch(DEFAULT_SERVER_URL + path, {
       method: body ? "POST" : "GET",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: body ? JSON.stringify(body) : undefined,
       signal: AbortSignal.timeout(5000),
     });

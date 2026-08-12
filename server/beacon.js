@@ -43,6 +43,12 @@ function beaconFor(deviceId, now = Date.now()) {
 function resolveBeacon(store, beacon, now = Date.now()) {
   const norm = String(beacon || "").toLowerCase().trim();
   if (!norm) return null;
+  // Dravex Tag hardware: a static 12-hex id claimed at pairing (staticBeacon)
+  // resolves directly — no day rotation, matching the tag's NVS-persisted id.
+  for (const id of Object.keys(store.devices)) {
+    const d = store.devices[id];
+    if (d.staticBeacon && d.staticBeacon === norm) return d;
+  }
   const buckets = [dayBucket(now), dayBucket(now) - 1];
   for (const bucket of buckets) {
     for (const id of Object.keys(store.devices)) {

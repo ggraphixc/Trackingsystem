@@ -21,6 +21,11 @@ class AppState(context: Context) {
         get() = prefs.getString("paired_at", null)
         set(v) = prefs.edit().putString("paired_at", v).apply()
 
+    /** Agent credential issued at claim — authorizes device-scoped API calls. */
+    var deviceToken: String?
+        get() = prefs.getString("device_token", null)
+        set(v) = prefs.edit().putString("device_token", v).apply()
+
     var lostMode: Boolean
         get() = prefs.getBoolean("lost_mode", false)
         set(v) = prefs.edit().putBoolean("lost_mode", v).apply()

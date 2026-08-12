@@ -137,7 +137,7 @@ class TrackingService : Service() {
         // Snapshot the items we are about to upload so we only remove exactly
         // these afterwards — anything pushed mid-upload survives.
         val queuedAts = pending.map { it.optString("queuedAt") }.filter { it.isNotEmpty() }.toSet()
-        val client = SyncClient(state.serverUrl)
+        val client = SyncClient(state.serverUrl, state.deviceToken)
         val uploaded = mutableSetOf<String>()
         val deviceQueued = mutableSetOf<String>()
         val items = mutableListOf<JSONObject>()
@@ -201,7 +201,7 @@ class TrackingService : Service() {
                     for (beacon in heard) {
                         val sighting = Beacon.sightingJson(beacon, myFix) ?: continue
                         val uploaded = try {
-                            SyncClient(state.serverUrl).postSighting(sighting)
+                            SyncClient(state.serverUrl, state.deviceToken).postSighting(sighting)
                         } catch (_: Exception) {
                             false
                         }
@@ -217,7 +217,7 @@ class TrackingService : Service() {
                 val deviceId = state.deviceId
                 // postFix returns Boolean and never throws (SyncClient swallows
                 // network errors) — no runCatching needed.
-                val uploaded = deviceId != null && SyncClient(state.serverUrl).postFix(deviceId, json)
+                val uploaded = deviceId != null && SyncClient(state.serverUrl, state.deviceToken).postFix(deviceId, json)
                 if (uploaded) {
                     flushVault() // online — drain anything captured offline
                 } else {
@@ -267,7 +267,7 @@ class TrackingService : Service() {
                         vault.push("event", state.deviceId, event)
                         val deviceId = state.deviceId
                         if (deviceId != null) {
-                            SyncClient(state.serverUrl).postEvent(deviceId, event)
+                            SyncClient(state.serverUrl, state.deviceToken).postEvent(deviceId, event)
                         }
                         lastSimFingerprint = simFp
                         pendingSimFingerprint = null
@@ -306,7 +306,7 @@ class TrackingService : Service() {
         while (isActive) {
             val deviceId = state.deviceId
             if (deviceId != null) {
-                val client = SyncClient(state.serverUrl)
+                val client = SyncClient(state.serverUrl, state.deviceToken)
                 val commands = try {
                     client.getCommands(deviceId, state.lastCommandId)
                 } catch (_: Exception) {

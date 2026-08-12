@@ -35,4 +35,16 @@
     <string name="recovery_contact_owner">I\'m not the owner</string>
     <string name="recovery_unlocked">Unlocked — you can now use the app. Mark the device found in your dashboard to fully disarm it.</string>
     <string name="recovery_wrong">Wrong recovery code. Try again.</string>
+
+    <!-- Device Check (stolen-device registry lookup) -->
+    <string name="device_check">Device Check</string>
+    <string name="device_check_note">Bought this phone used, or checking a second-hand buy? Dial *#06# to see the IMEI and check it against the stolen-device registry before trusting it.</string>
+    <string name="imei_hint">IMEI number, e.g. 354988071234567</string>
+    <string name="check_imei">Is this phone reported stolen?</string>
+    <string name="check_imei_short">Enter at least 6 digits of the IMEI first.</string>
+    <string name="device_check_idle">No check yet.</string>
+    <string name="checking_registry">Checking the stolen-device registry…</string>
+    <string name="registry_stolen">STOLEN — this IMEI is listed in the Dravex stolen-device registry. Do not use it; report it to the nearest police station.</string>
+    <string name="registry_clean">Clean — no active stolen report for this IMEI.</string>
+    <string name="registry_unreachable">Registry unreachable — check your server URL and internet connection.</string>
 </resources>

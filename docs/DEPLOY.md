@@ -104,3 +104,28 @@ cd desktop && npm start       # desktop agent
 ```
 
 Set `DATABASE_URL` locally to use Neon in development; unset it to use `server/data.json`.
+
+## Enabling API auth (optional)
+
+The server runs fully open by default (Phase-1 zero-config). To lock it down,
+set an owner key in the server env:
+
+```bash
+DRAVEX_OWNER_KEY=your-long-random-secret
+```
+
+When set:
+
+- **Owner endpoints** (device list, mark lost, alerts, settings, command queue,
+  evidence/sighting/fix reads) require `Authorization: Bearer <DRAVEX_OWNER_KEY>`.
+- **Agent endpoints** (fix/evidence/event upload, command poll/ack) require the
+  per-device token issued at `POST /api/pair/claim` — agents store it automatically.
+- Public stays public: `/api/health`, `/api/check`, `POST /api/sightings`, claim.
+
+Clients that need the key: the **web dashboard** (owner-key card on the Agents
+page, stored per browser) and the **desktop agent** (owner-key field in
+Settings, for the owner-only views).
+
+> Devices paired *before* auth was enabled have no stored token and will get
+> 401 on uploads. Fix: `POST /api/devices/:id/token` (owner key) returns a
+> fresh token — enter it in the agent, or simply re-pair the device.

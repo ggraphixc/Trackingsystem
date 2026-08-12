@@ -131,5 +131,50 @@
             android:contentDescription="@string/webcam_preview"
             android:scaleType="centerCrop" />
 
+        <!-- Device Check: post-flash stolen-registry lookup -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/device_check"
+            android:textColor="@color/ink"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/device_check_note"
+            android:textColor="@color/ink_muted"
+            android:textSize="12sp" />
+
+        <EditText
+            android:id="@+id/imeiInput"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:hint="@string/imei_hint"
+            android:inputType="phone"
+            android:fontFamily="monospace"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/deviceCheckButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/check_imei" />
+
+        <TextView
+            android:id="@+id/deviceCheckResult"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:background="@drawable/vault_bg"
+            android:padding="10dp"
+            android:text="@string/device_check_idle"
+            android:textColor="@color/ink"
+            android:textSize="12sp" />
+
     </LinearLayout>
 </ScrollView>

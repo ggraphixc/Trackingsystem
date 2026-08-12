@@ -27,6 +27,8 @@ const defaultState = {
   lastSyncAt: null,
   serialNumber: null,
   pairedAt: null,
+  deviceToken: null, // agent credential issued at claim (auth mode)
+  ownerKey: "", // DRAVEX_OWNER_KEY — only needed when the server enables auth
 };
 
 function loadState() {
@@ -209,7 +211,11 @@ ipcMain.handle("agent:get-info", async () => {
 });
 
 ipcMain.handle("agent:set-server", (_e, url) => {
-  sync = new SyncClient(url);
+  // Restore BOTH credentials: the owner key for owner-scoped reads and the
+  // device token for this agent's own uploads (re-pointing the URL must not
+  // drop the token issued at claim).
+  const st = loadState();
+  sync = new SyncClient(url).setOwnerKey(st.ownerKey).setDeviceToken(st.deviceToken);
   const state = saveState({ serverUrl: url });
   return sync.health().then((h) => ({
     state,
@@ -217,13 +223,28 @@ ipcMain.handle("agent:set-server", (_e, url) => {
   }));
 });
 
+/** Owner key for servers that enable DRAVEX_OWNER_KEY (stored on this machine). */
+ipcMain.handle("agent:set-owner-key", (_e, key) => {
+  const clean = String(key || "").trim().slice(0, 128);
+  const state = saveState({ ownerKey: clean });
+  if (sync) sync.setOwnerKey(clean);
+  return { ownerKey: state.ownerKey || "" };
+});
+
 ipcMain.handle("agent:claim", async (_e, code) => {
   const info = await getDeviceInfo();
   saveState({ serialNumber: info.serialNumber });
-  if (!sync) sync = new SyncClient(loadState().serverUrl);
+  if (!sync) sync = new SyncClient(loadState().serverUrl).setOwnerKey(loadState().ownerKey);
   const res = await sync.claim(code, info);
   if (res && res.deviceId) {
-    const state = saveState({ deviceId: res.deviceId, pairedAt: new Date().toISOString() });
+    // Store the agent credential issued at claim so device-scoped calls stay
+    // authorized when the server enables DRAVEX_OWNER_KEY.
+    if (res.token) sync.setDeviceToken(res.token);
+    const state = saveState({
+      deviceId: res.deviceId,
+      pairedAt: new Date().toISOString(),
+      deviceToken: res.token || null,
+    });
     flushVault(); // freshly linked — upload anything queued before pairing
     return { ok: true, deviceId: res.deviceId, state };
   }
@@ -492,7 +513,10 @@ if (!gotLock) {
       return permission === "media" && wc === getWindow()?.webContents;
     });
 
-    sync = new SyncClient(loadState().serverUrl);
+    const bootState = loadState();
+    sync = new SyncClient(bootState.serverUrl)
+      .setOwnerKey(bootState.ownerKey)
+      .setDeviceToken(bootState.deviceToken);
 
     createWindow();
     createTray({

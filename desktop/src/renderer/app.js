@@ -73,6 +73,7 @@
 
     $("lost-toggle").checked = !!state.lostMode;
     $("autostart-toggle").checked = !!state.autoStart;
+    $("owner-key").value = state.ownerKey || "";
 
     if (state.lastFix) renderFix(state.lastFix);
     else refreshLocation();
@@ -136,6 +137,15 @@
     }
     $("link-note").textContent = "Server unreachable. Start it with: cd server && npm start";
     return false;
+  }
+
+  async function saveOwnerKey() {
+    $("btn-save-owner-key").disabled = true;
+    const res = await api.setOwnerKey($("owner-key").value);
+    $("btn-save-owner-key").disabled = false;
+    $("owner-key-note").textContent = res
+      ? "Saved — owner-only views are now unlocked on this machine (if the server has auth enabled)."
+      : "Could not save — is the agent running normally?";
   }
 
   async function linkAgent() {
@@ -1099,6 +1109,7 @@
 
     $("btn-server").addEventListener("click", testServer);
     $("btn-link").addEventListener("click", linkAgent);
+    $("btn-save-owner-key").addEventListener("click", saveOwnerKey);
     $("btn-save-report-info").addEventListener("click", saveReportInfo);
     $("btn-open-dashboard").addEventListener("click", () => {
       const url = $("server-url").value.trim() || "http://localhost:4173";

@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   DEFAULT_SERVER_URL,
   checkServerHealth,
+  getOwnerKey,
   getSettings,
   listDevices,
   registerPair,
@@ -12,6 +13,7 @@ import {
   sendCommand,
   sendTestSms,
   setDeviceLost,
+  setOwnerKey,
 } from "@/lib/api";
 import type { PairedDevice, ServerSettings } from "@/lib/api";
 import DeviceAlerts from "@/components/device-alerts";
@@ -57,6 +59,9 @@ export default function AgentsPage() {
   const [smsPhone, setSmsPhone] = useState("");
   const [smsBusy, setSmsBusy] = useState(false);
   const [smsNote, setSmsNote] = useState("");
+  const [ownerKey, setOwnerKeyInput] = useState(getOwnerKey());
+  const [ownerKeyBusy, setOwnerKeyBusy] = useState(false);
+  const [ownerKeyNote, setOwnerKeyNote] = useState("");
 
   const load = useCallback(async () => {
     setServer(await checkServerHealth());
@@ -195,6 +200,60 @@ export default function AgentsPage() {
           <p className="text-2xl font-bold text-ink">{devices.length}</p>
           <p className="text-xs text-ink-muted">linked devices</p>
         </div>
+      </Card>
+
+      {/* Server security — optional owner key for DRAVEX_OWNER_KEY auth */}
+      <Card className="mb-6 p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-600">
+              <LockClosedIcon className="h-5 w-5" />
+            </span>
+            <div>
+              <h3 className="text-sm font-semibold text-ink">Server security — owner key</h3>
+              <p className="mt-1 max-w-lg text-sm text-ink-muted">
+                If your sync server runs with <span className="font-mono text-xs">DRAVEX_OWNER_KEY</span> set,
+                enter it here so this dashboard can read devices, mark lost, and view alerts. Stored in this
+                browser only. Without a key (Phase-1 default) the dashboard works as before.
+              </p>
+            </div>
+          </div>
+          <span className="chip bg-slate-100 text-slate-600">
+            {ownerKey ? "key set on this browser" : "no key set"}
+          </span>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <input
+            className="input min-w-56 flex-1 font-mono"
+            type="password"
+            placeholder="Owner key (leave empty to clear)"
+            value={ownerKey}
+            onChange={(e) => setOwnerKeyInput(e.target.value)}
+            aria-label="Owner key"
+          />
+          <button
+            className="btn-secondary"
+            disabled={ownerKeyBusy}
+            onClick={() => {
+              setOwnerKeyBusy(true);
+              setOwnerKey(ownerKey.trim());
+              setOwnerKeyBusy(false);
+              setOwnerKeyNote(
+                ownerKey.trim()
+                  ? "Saved — owner-only requests now send this key."
+                  : "Cleared — requests are sent without auth.",
+              );
+              load();
+            }}
+          >
+            Save owner key
+          </button>
+        </div>
+        {ownerKeyNote ? <p className="mt-2 text-xs text-ink-faint">{ownerKeyNote}</p> : null}
+        <p className="mt-3 text-xs text-ink-faint">
+          Devices list empty while the server shows online? Your server may require the owner key — set it above
+          and refresh.
+        </p>
       </Card>
 
       {/* SMS fallback alerts */}
