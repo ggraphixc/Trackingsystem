@@ -75,6 +75,8 @@ export interface PairedDevice {
   verifiedAt?: string | null;
   /** ownership handed over for resale (second-life market) */
   transferredAt?: string | null;
+  /** verified resale listing (N5) — only present when the device is listed */
+  listing?: { price: number; condition: string; listedAt: string; interestCount: number } | null;
   /** owner-set one-way message shown to a finder */
   recoveryMessage?: { message: string; contactPreference?: string | null; at: string } | null;
   /** anonymous messages a finder sent through the device's recovery page */
@@ -270,6 +272,9 @@ export interface RegistryVerdict {
   reportedAt?: string;
   previouslyReported?: boolean;
   message: string;
+  /** N5: this physical device is in a verified resale listing */
+  resaleReady?: boolean;
+  listing?: { price: number; condition: string; listedAt: string } | null;
 }
 
 export async function checkStolenRegistry(query: string): Promise<RegistryVerdict | null> {
@@ -326,6 +331,8 @@ export interface SmsStatus {
 export interface ServerSettings {
   ownerPhone: string;
   smsEnabled: boolean;
+  /** N3: NDPA data-minimization window (30–730 days) */
+  evidenceRetentionDays: number;
   sms: SmsStatus;
 }
 
@@ -336,6 +343,7 @@ export async function getSettings(): Promise<ServerSettings | null> {
 export async function saveSettings(patch: {
   ownerPhone?: string;
   smsEnabled?: boolean;
+  evidenceRetentionDays?: number;
 }): Promise<ServerSettings | null> {
   return req<ServerSettings>("/api/settings", patch);
 }
@@ -470,6 +478,11 @@ export interface AdminHealth {
   alerts: { raised: number };
   errors: { route: number };
   security: { denied401: number; rateLimited: number; registryChecks: number; registryHits: number };
+  retention: {
+    days: number;
+    purge: { runs: number; fixes: number; evidence: number; sightings: number; lastAt: string | null };
+  };
+  ops: { checks: number; fired: number; lastAt: string | null; last: string[] };
   deliveryLog: DeliveryEntry[];
 }
 
@@ -495,4 +508,74 @@ export async function retryDelivery(
     "/api/admin/retry-delivery",
     { id },
   );
+}
+
+/** N3: run the evidence-retention purge now (operator). */
+export async function runPurge(): Promise<{
+  ok: boolean;
+  days?: number;
+  purged?: { runs: number; fixes: number; evidence: number; sightings: number; lastAt: string | null };
+} | null> {
+  return req("/api/admin/purge", {});
+}
+
+/** N4: evaluate operator health thresholds now (operator). */
+export async function runOpsCheck(): Promise<{
+  ok: boolean;
+  fired?: string[];
+} | null> {
+  return req("/api/admin/ops-check", {});
+}
+
+/* ---------------- N5: verified resale + public counters ---------------- */
+
+export interface ResaleListing {
+  deviceId: string;
+  type: string | null;
+  label: string | null;
+  price: number;
+  condition: string;
+  listedAt: string;
+  interestCount: number;
+}
+
+export interface PublicStats {
+  ok?: boolean;
+  protected: number;
+  recovered: number;
+  sighted: number;
+  listings: number;
+}
+
+/** Public aggregate counters (landing page). */
+export async function getStats(): Promise<PublicStats | null> {
+  return req<PublicStats>("/api/stats");
+}
+
+/** Public verified-resale browse. */
+export async function getListings(): Promise<ResaleListing[]> {
+  return (await req<{ listings: ResaleListing[] }>("/api/listings"))?.listings ?? [];
+}
+
+/** Owner lists a TRANSFERRED device for verified resale. */
+export async function listDevice(
+  deviceId: string,
+  price: number,
+  condition: string,
+): Promise<{ ok: boolean; listing?: unknown } | null> {
+  return req<{ ok: boolean; listing?: unknown }>("/api/listings", { deviceId, price, condition });
+}
+
+/** Owner pulls a listing. */
+export async function unlistDevice(deviceId: string): Promise<boolean> {
+  const res = await req<{ ok: boolean }>("/api/listings/unlist", { deviceId });
+  return !!res?.ok;
+}
+
+/** Buyer expresses interest — owner is alerted privately. */
+export async function expressInterest(deviceId: string, message?: string): Promise<boolean> {
+  const res = await req<{ ok: boolean }>(`/api/listings/${deviceId}/interest`, {
+    message: message || undefined,
+  });
+  return !!res?.ok;
 }

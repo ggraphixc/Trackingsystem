@@ -82,6 +82,7 @@ const DEFAULT_SETTINGS = {
   smsEnabled: true,
   smsLastSentAt: null,
   smsLastResult: null,
+  evidenceRetentionDays: 90, // N3: NDPA data-minimization (clamped 30–730)
 };
 
 let store = {
@@ -95,6 +96,7 @@ let store = {
   sessions: {}, // token → { userId, createdAt } (zero-dependency session store)
   resetTokens: {}, // token → { userId, expiresAt } (password reset, 1 h TTL)
   deliveryLog: [], // alert-delivery attempts: { id, channel, ok, error?, at, alert? }
+  listings: {}, // N5 verified resale: deviceId → { price, condition, listedAt, interests[] }
 };
 
 /*
@@ -113,6 +115,9 @@ const metrics = {
   alerts: { raised: 0 },
   errors: { route: 0 },
   security: { denied401: 0, rateLimited: 0, registryChecks: 0, registryHits: 0 },
+  // N3 retention sweep + N4 operator health checks (surfaced at admin/health).
+  purge: { runs: 0, fixes: 0, evidence: 0, sightings: 0, lastAt: null },
+  ops: { checks: 0, fired: 0, lastAt: null, last: [] },
 };
 
 // Nigerian mobile operators by MNC (MCC 621). The Android agent fingerprints
@@ -383,6 +388,183 @@ function logDelivery(channel, ok, error, alert) {
   });
   if (store.deliveryLog.length > 20) store.deliveryLog = store.deliveryLog.slice(0, 20);
   saveStore();
+}
+
+/* ---------------- N3: data retention (NDPA data-minimization) ---------------- */
+
+/** Owner-configured retention window in days (clamped 30–730, default 90). */
+function retentionDays() {
+  const n = Number(store.settings && store.settings.evidenceRetentionDays);
+  return Number.isFinite(n) && n >= 30 && n <= 730 ? Math.floor(n) : 90;
+}
+
+/**
+ * Purge fixes/evidence/sightings older than the retention window. The most
+ * recent fix per device is always kept (a device with no fix at all is useless
+ * in a theft), and the `lastFix` snapshot survives regardless — NDPA
+ * data-minimization without breaking recovery. Runs on a 6 h schedule, at
+ * boot, and on demand via POST /api/admin/purge.
+ */
+function purgeExpiredData() {
+  const cutoff = Date.now() - retentionDays() * 86400000;
+  const purged = { fixes: 0, evidence: 0, sightings: 0 };
+  for (const dev of Object.values(store.devices || {})) {
+    // Purge by CAPTURE time (timestamp/capturedAt/at) — a burst-synced offline
+    // vault legitimately uploads old fixes, and the retention window is about
+    // when the data was created, not when it reached the server.
+    const fixes = (dev.fixes || []).filter(
+      (f) => new Date(f.timestamp || f.receivedAt || 0).getTime() >= cutoff,
+    );
+    if ((dev.fixes || []).length && fixes.length === 0 && dev.lastFix) fixes.push(dev.lastFix);
+    purged.fixes += (dev.fixes || []).length - fixes.length;
+    dev.fixes = fixes;
+
+    const evidence = (dev.evidence || []).filter(
+      (e) => new Date(e.capturedAt || e.receivedAt || 0).getTime() >= cutoff,
+    );
+    purged.evidence += (dev.evidence || []).length - evidence.length;
+    dev.evidence = evidence;
+
+    const sightings = (dev.sightings || []).filter(
+      (s) => new Date(s.at || s.receivedAt || 0).getTime() >= cutoff,
+    );
+    purged.sightings += (dev.sightings || []).length - sightings.length;
+    dev.sightings = sightings;
+  }
+  metrics.purge.runs += 1;
+  metrics.purge.fixes += purged.fixes;
+  metrics.purge.evidence += purged.evidence;
+  metrics.purge.sightings += purged.sightings;
+  metrics.purge.lastAt = new Date().toISOString();
+  if (purged.fixes + purged.evidence + purged.sightings > 0) saveStore();
+  return purged;
+}
+
+/* ---------------- N4: observability alerting (operator webhook) ---------------- */
+
+// Thresholds, env-tunable (the theft lab lowers them to test the pipeline).
+const OPS_INTERVAL_S = Number(process.env.OPS_ALERT_INTERVAL_S) || 60;
+const OPS_COOLDOWN_S = Number(process.env.OPS_ALERT_COOLDOWN_S) || 900;
+const OPS_GEO_MIN_REQUESTS = Number(process.env.OPS_GEO_MIN_REQUESTS) || 5;
+const OPS_GEO_UNRESOLVED_RATIO = Number(process.env.OPS_GEO_UNRESOLVED_RATIO) || 0.5;
+const OPS_DELIVERY_FAIL_DELTA = Number(process.env.OPS_DELIVERY_FAIL_DELTA) || 3;
+const OPS_SURGE_MIN_CONNECTED = Number(process.env.OPS_SURGE_MIN_CONNECTED) || 2;
+const OPS_RATE_LIMIT_STORM = Number(process.env.OPS_RATE_LIMIT_STORM) || 20;
+
+const OPS_STATE = { last: null, lastConnected: null, cooldownUntil: {} };
+
+/**
+ * Evaluate the /api/admin/health surfaces against thresholds since the last
+ * check. Returns the list of breached conditions (each fires at most once per
+ * cooldown — dedupe so a persistent problem doesn't spam the operator).
+ */
+function opsBreaches() {
+  const now = Date.now();
+  const m = metrics;
+  const prev = OPS_STATE.last || m;
+  // { slug, message }: the cooldown dedupes by STABLE slug — the display
+  // message embeds volatile numbers ("18 throttled…"), which would otherwise
+  // change every check and defeat the cooldown (persistent problem → spam).
+  const fired = [];
+
+  const geo = m.geolocate;
+  if (
+    geo.requests >= OPS_GEO_MIN_REQUESTS &&
+    geo.unresolved / geo.requests >= OPS_GEO_UNRESOLVED_RATIO
+  ) {
+    fired.push({ slug: "geolocate-unresolved", message: `geolocate unresolved spike: ${geo.unresolved}/${geo.requests} unresolved` });
+  }
+
+  const failDelta =
+    m.sms.failed - prev.sms.failed + (m.webhooks.failed - prev.webhooks.failed);
+  if (failDelta >= OPS_DELIVERY_FAIL_DELTA) {
+    fired.push({ slug: "delivery-failures", message: `${failDelta} SMS/webhook delivery failure(s) in the last check window` });
+  }
+
+  const all = Object.values(store.devices || {});
+  const connected = all.filter(
+    (d) => d.lastSeenAt && now - new Date(d.lastSeenAt).getTime() < 5 * 60_000,
+  ).length;
+  if (
+    OPS_STATE.lastConnected !== null &&
+    OPS_STATE.lastConnected >= OPS_SURGE_MIN_CONNECTED &&
+    connected < OPS_STATE.lastConnected / 2
+  ) {
+    fired.push({ slug: "offline-surge", message: `offline-device surge: connected ${OPS_STATE.lastConnected} → ${connected}` });
+  }
+  OPS_STATE.lastConnected = connected;
+
+  const rateDelta = m.security.rateLimited - prev.security.rateLimited;
+  if (rateDelta >= OPS_RATE_LIMIT_STORM) {
+    fired.push({ slug: "rate-limit-storm", message: `rate-limit/abuse storm: ${rateDelta} throttled requests in the last check window` });
+  }
+
+  OPS_STATE.last = {
+    sms: { ...m.sms },
+    webhooks: { ...m.webhooks },
+    security: { ...m.security },
+  };
+  return fired.filter((f) => !OPS_STATE.cooldownUntil[f.slug] || OPS_STATE.cooldownUntil[f.slug] <= now);
+}
+
+/**
+ * Run one operator health check: any breached condition raises an "ops"
+ * alert through the normal pipeline (push + ALERT_WEBHOOK_URL + delivery
+ * log), each at most once per cooldown. Never throws.
+ */
+function runOpsHealthCheck() {
+  metrics.ops.checks += 1;
+  const fired = opsBreaches();
+  metrics.ops.lastAt = new Date().toISOString();
+  metrics.ops.last = fired.map((f) => f.message);
+  if (!fired.length) return { ok: true, fired: [] };
+  const dev = { deviceId: "ops", hostname: "Dravex server" };
+  for (const condition of fired) {
+    OPS_STATE.cooldownUntil[condition.slug] = Date.now() + OPS_COOLDOWN_S * 1000;
+    metrics.ops.fired += 1;
+    raiseAlert("ops", dev, `Service-health check: ${condition.message}.`, { sms: false });
+  }
+  return { ok: true, fired: fired.map((f) => f.message) };
+}
+
+/* ---------------- N5: verified resale listings (second-life market) ---------------- */
+
+/** Public-safe listing shape for a device (no owner data, no device secrets). */
+function listingFor(deviceId) {
+  const l = store.listings && store.listings[deviceId];
+  if (!l) return null;
+  return {
+    price: l.price,
+    condition: l.condition,
+    listedAt: l.listedAt,
+    interestCount: (l.interests || []).length,
+  };
+}
+
+/** Match a public check query against LISTED devices (IMEI/serial → listing). */
+function listingLookup(query) {
+  const digits = String(query || "").replace(/\D/g, "");
+  const alpha = String(query || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  for (const dev of Object.values(store.devices || {})) {
+    const imeiHit = dev.imei && dev.imei.replace(/\D/g, "") === digits;
+    const serialHit =
+      dev.serialNumber && dev.serialNumber.replace(/[^a-zA-Z0-9]/g, "").toUpperCase() === alpha;
+    if ((imeiHit || serialHit) && store.listings && store.listings[dev.deviceId]) {
+      return { dev, listing: store.listings[dev.deviceId] };
+    }
+  }
+  return null;
+}
+
+/* ---------------- scheduled tasks (N3 + N4) ---------------- */
+
+function startScheduledTasks() {
+  setInterval(purgeExpiredData, 6 * 3600 * 1000).unref();
+  setInterval(runOpsHealthCheck, Math.max(10, OPS_INTERVAL_S) * 1000).unref();
+  runOpsHealthCheck(); // baseline snapshot — never fires on a fresh process
+  console.log(
+    `Dravex scheduled tasks: retention sweep every 6 h (${retentionDays()} days), ops health check every ${OPS_INTERVAL_S}s`,
+  );
 }
 
 /* ---------------- optional auth (Phase 2-lite) ---------------- */
@@ -706,6 +888,20 @@ async function route(req, res) {
     metrics.security.registryChecks++;
     const verdict = registryVerdict(registryLookup(cleaned));
     if (verdict.found) metrics.security.registryHits++;
+    // N5: if this physical device is in a verified resale listing, tell the
+    // buyer it is legitimately on the market (public-safe: price + condition
+    // only, never owner data).
+    const listed = listingLookup(cleaned);
+    // Only advertise verified resale when the registry reads CLEAN — a listed
+    // device whose current owner re-reported it lost must show STOLEN, never
+    // both. (Listings require a transfer, which clears the registry, but the
+    // new owner can mark it lost afterwards.)
+    if (listed && !verdict.found) {
+      verdict.resaleReady = true;
+      verdict.listing = listingFor(listed.dev.deviceId);
+      verdict.message =
+        "This device is listed for verified resale by its owner — registry clean, ownership transferred.";
+    }
     return json(res, 200, verdict);
   }
 
@@ -776,11 +972,12 @@ async function route(req, res) {
     return json(res, 200, {
       ownerPhone: maskPhone(store.settings.ownerPhone),
       smsEnabled: store.settings.smsEnabled !== false,
+      evidenceRetentionDays: retentionDays(),
       sms: smsStatus(store),
     });
   }
 
-  // POST /api/settings { ownerPhone?, smsEnabled? } → save + return config
+  // POST /api/settings { ownerPhone?, smsEnabled?, evidenceRetentionDays? } → save + return config
   if (isPost && url.pathname === "/api/settings") {
     if (!ownerOk(req)) return json(res, 401, { error: "Owner key required." });
     const body = await readBody(req);
@@ -792,12 +989,20 @@ async function route(req, res) {
       store.settings.ownerPhone = normalized;
     }
     if (body.smsEnabled !== undefined) store.settings.smsEnabled = !!body.smsEnabled;
+    if (body.evidenceRetentionDays !== undefined) {
+      const n = Number(body.evidenceRetentionDays);
+      if (!Number.isFinite(n) || n < 30 || n > 730) {
+        return json(res, 400, { error: "Evidence retention must be 30–730 days." });
+      }
+      store.settings.evidenceRetentionDays = Math.floor(n);
+    }
     saveStore();
     // The POST response returns the raw number (the owner just typed it and
     // the dashboard needs it back for the input field).
     return json(res, 200, {
       ownerPhone: store.settings.ownerPhone,
       smsEnabled: store.settings.smsEnabled !== false,
+      evidenceRetentionDays: retentionDays(),
       sms: smsStatus(store),
     });
   }
@@ -1184,6 +1389,13 @@ async function route(req, res) {
       alerts: metrics.alerts,
       errors: metrics.errors,
       security: metrics.security,
+      retention: { days: retentionDays(), purge: metrics.purge },
+      ops: {
+        checks: metrics.ops.checks,
+        fired: metrics.ops.fired,
+        lastAt: metrics.ops.lastAt,
+        last: metrics.ops.last,
+      },
       deliveryLog: (store.deliveryLog || []).slice(0, 20),
     });
   }
@@ -1322,8 +1534,146 @@ async function route(req, res) {
       recoveryMessage: d.recoveryMessage || null,
       contactCount: (d.contactMessages || []).length,
       ownerId: d.ownerId || null,
+      listing: listingFor(d.deviceId),
     }));
     return json(res, 200, list);
+  }
+
+  /* ---------------- N5: verified resale + public counters ---------------- */
+
+  // GET /api/stats — public aggregate counters (landing page). Counters only,
+  // never owner or device data.
+  if (!isPost && url.pathname === "/api/stats") {
+    const all = Object.values(store.devices || {});
+    return json(res, 200, {
+      ok: true,
+      protected: all.length,
+      recovered: all.filter(
+        (d) => d.verifiedAt || (d.events || []).some((e) => e.type === "recovered"),
+      ).length,
+      sighted: all.reduce((n, d) => n + (d.sightings || []).length, 0),
+      listings: Object.keys(store.listings || {}).length,
+    });
+  }
+
+  // GET /api/listings — public verified-resale browse (generic labels only).
+  if (!isPost && url.pathname === "/api/listings") {
+    const out = Object.entries(store.listings || {})
+      .map(([deviceId, l]) => {
+        const dev = store.devices[deviceId];
+        return {
+          deviceId,
+          type: dev ? deviceType(dev) : null,
+          label: dev ? (deviceType(dev) === "phone" ? "A phone" : "A laptop") : "A device",
+          price: l.price,
+          condition: l.condition,
+          listedAt: l.listedAt,
+          interestCount: (l.interests || []).length,
+        };
+      })
+      .sort((a, b) => (a.listedAt < b.listedAt ? 1 : -1));
+    return json(res, 200, { listings: out });
+  }
+
+  // POST /api/listings { deviceId, price, condition } — owner lists a
+  // TRANSFERRED device for verified resale. Only devices that completed the
+  // legitimate transfer flow can be listed (registry cleared, ownership
+  // released) — the second-life market can never launder a stolen device.
+  if (isPost && url.pathname === "/api/listings") {
+    const body = await readBody(req);
+    const dev = store.devices[body.deviceId];
+    if (!dev) return json(res, 404, { error: "Device not found." });
+    if (!requireOwnerOf(req, res, dev)) return;
+    if (!dev.transferredAt) {
+      return json(res, 400, {
+        error: "Only transferred devices can be listed — complete the ownership transfer first.",
+      });
+    }
+    const price = Number(body.price);
+    if (!Number.isFinite(price) || price < 0 || price > 100_000_000) {
+      return json(res, 400, { error: "Enter a valid price in NGN (0 – 100,000,000)." });
+    }
+    const condition = String(body.condition || "").trim().slice(0, 40);
+    if (!condition) return json(res, 400, { error: "Condition is required (e.g. Good, Fair, Refurbished)." });
+    store.listings = store.listings || {};
+    store.listings[dev.deviceId] = {
+      price: Math.round(price),
+      condition,
+      listedAt: new Date().toISOString(),
+      interests: [],
+    };
+    saveStore();
+    raiseAlert(
+      "listing",
+      dev,
+      `${dev.hostname || "A device"} is listed for verified resale at ₦${Math.round(price).toLocaleString("en-NG")} (${condition}).`,
+    );
+    return json(res, 200, { ok: true, listing: listingFor(dev.deviceId) });
+  }
+
+  // POST /api/listings/unlist { deviceId } — owner pulls a listing.
+  if (isPost && url.pathname === "/api/listings/unlist") {
+    const body = await readBody(req);
+    const dev = store.devices[body.deviceId];
+    if (!dev) return json(res, 404, { error: "Device not found." });
+    if (!requireOwnerOf(req, res, dev)) return;
+    delete store.listings[dev.deviceId];
+    saveStore();
+    return json(res, 200, { ok: true });
+  }
+
+  // POST /api/listings/:deviceId/interest { message? } — public, rate-limited.
+  // A buyer expresses interest; the owner is alerted through the existing
+  // privacy-preserving alert channel (the buyer's identity is never recorded).
+  if (isPost && parts[0] === "api" && parts[1] === "listings" && parts[3] === "interest") {
+    if (contactLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many requests — try again later." });
+    }
+    const listing = store.listings && store.listings[parts[2]];
+    if (!listing) return json(res, 404, { error: "Listing not found." });
+    const dev = store.devices[parts[2]];
+    const body = await readBody(req);
+    const message =
+      String(body.message || "").trim().slice(0, 280) ||
+      "A buyer is interested in your listing.";
+    listing.interests = listing.interests || [];
+    if (listing.interests.length >= 20) listing.interests = listing.interests.slice(-19);
+    listing.interests.push({ message, at: new Date().toISOString() });
+    saveStore();
+    if (dev) {
+      raiseAlert(
+        "interest",
+        dev,
+        `${dev.hostname || "Your device"}: a buyer expressed interest in your listing (${listing.condition}, ₦${listing.price.toLocaleString("en-NG")}) — check the listings view.`,
+        { sms: false },
+      );
+    }
+    return json(res, 200, { ok: true });
+  }
+
+  // POST /api/admin/purge — run the N3 retention sweep now (operator only).
+  if (isPost && url.pathname === "/api/admin/purge") {
+    if (!adminOk(req)) return json(res, 401, { error: "Owner key required." });
+    if (adminLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many requests — try again in a minute." });
+    }
+    purgeExpiredData();
+    return json(res, 200, {
+      ok: true,
+      days: retentionDays(),
+      purged: metrics.purge,
+      ranAt: metrics.purge.lastAt,
+    });
+  }
+
+  // POST /api/admin/ops-check — evaluate N4 health thresholds now (operator).
+  if (isPost && url.pathname === "/api/admin/ops-check") {
+    if (!adminOk(req)) return json(res, 401, { error: "Owner key required." });
+    if (adminLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many requests — try again in a minute." });
+    }
+    const result = runOpsHealthCheck();
+    return json(res, 200, { ok: true, ...result });
   }
 
   // /api/devices/:id/... (devices are only created by pair/register and claim)
@@ -1655,6 +2005,7 @@ async function route(req, res) {
         transferredAt: dev.transferredAt || null,
         recoveryMessage: dev.recoveryMessage || null,
         contactMessages: (dev.contactMessages || []).slice(-10).reverse(),
+        listing: listingFor(dev.deviceId),
       });
     }
 
@@ -1694,6 +2045,7 @@ async function boot() {
         deliveryLog: [],
         claimFails: {},
         geoCache: {},
+        listings: {},
         ...loaded,
       };
       store.settings = { ...DEFAULT_SETTINGS, ...(loaded.settings || {}) };
@@ -1706,6 +2058,8 @@ async function boot() {
     }
   }
   console.log(`Dravex sync server: storage = ${storage.describe()}`);
+  // N3 retention sweep + N4 operator health checks (unref'd timers).
+  startScheduledTasks();
   server.listen(PORT, HOST, () => {
     console.log(`Dravex sync server listening on http://${HOST}:${PORT}`);
   });

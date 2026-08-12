@@ -13,6 +13,7 @@ import {
   ShieldCheckIcon,
 } from "@/components/icons";
 import { Logo } from "@/components/ui";
+import StatsBand from "@/components/stats-band";
 
 const PILLARS = [
   {
@@ -279,6 +280,9 @@ export default function LandingPage() {
           </div>
         </div>
       </section>
+
+      {/* ---------- Live network counters (N5) ---------- */}
+      <StatsBand />
 
       {/* ---------- CTA ---------- */}
       <section className="mx-auto max-w-6xl px-4 py-16 lg:px-8">

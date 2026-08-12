@@ -188,10 +188,36 @@ Settings, for the owner-only views).
 | `ALERT_WEBHOOK_URL` | Comma-separated HTTPS URLs that receive every alert as JSON `{ alert }`. Point it at a webhook-to-email service (e.g. ntfy, Zapier, Pipedream) for an email fallback the moment push/SMS can't reach the owner. **Also carries password-reset tokens** (payload `{ type: "password_reset", email, token, expiresAt }`) — the server-side delivery channel for the forgot-password flow | optional (needed for real email reset delivery) |
 | `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_PHONE_NUMBER` | Twilio SMS provider (replaces log mode) | optional — either Twilio or Termii |
 | `TERMII_API_KEY` + `TERMII_FROM` | Termii SMS provider — Nigeria-native, DND-friendly | optional — either Termii or Twilio |
+| `OPS_ALERT_INTERVAL_S` | N4 operator health-check cadence in seconds (default 60) | optional |
+| `OPS_ALERT_COOLDOWN_S` | N4 minimum seconds between alerts of the same condition (default 900 — dedupe so operators aren't spammed) | optional |
+| `OPS_RATE_LIMIT_STORM` | N4 rate-limit/abuse threshold: throttled requests per check window (default 20) | optional |
+| `OPS_DELIVERY_FAIL_DELTA` | N4 SMS/webhook failure threshold per check window (default 3) | optional |
+| `OPS_GEO_UNRESOLVED_RATIO` | N4 geolocation unresolved-fraction threshold (default 0.5, needs ≥ `OPS_GEO_MIN_REQUESTS` requests, default 5) | optional |
+| `OPS_SURGE_MIN_CONNECTED` | N4 offline-surge baseline (default 2 — fires when connected devices halve from ≥ this many) | optional |
 
 SMS stays in **log mode** (messages print to the server console) until a
 provider is configured — the E2E suite runs against log mode, and switching
 to a live provider requires zero code changes.
+
+## Phase 2.5+ (N3/N4/N5) notes
+
+- **N3 — data retention (NDPA):** every device's fixes, webcam evidence and
+  community sightings are purged when older than the owner-configured
+  `evidenceRetentionDays` window (default 90, clamped 30–730, set in the
+  dashboard Agents page or `POST /api/settings`). A sweep runs at boot and
+  every 6 h; `POST /api/admin/purge` runs it on demand. The most recent fix
+  and the `lastFix` snapshot always survive so recovery is never blind.
+- **N4 — observability alerting:** the server evaluates `/api/admin/health`
+  thresholds on a schedule and POSTs `{ alert: { type: "ops", … } }` to
+  `ALERT_WEBHOOK_URL` (deduped per condition by cooldown). Thresholds are the
+  `OPS_*` env vars above. `POST /api/admin/ops-check` runs a check on demand;
+  results surface on the Service-health page.
+- **N5 — verified resale:** only devices that completed the legitimate
+  `POST /api/devices/:id/transfer` flow can be listed (`POST /api/listings`).
+  The public Device Check (`/api/check`) shows **"verified resale-ready"** for
+  listed devices; buyers submit interest anonymously (`POST
+  /api/listings/:id/interest`) and the owner is alerted privately. No payment
+  or checkout — that is Phase 3.5.
 
 ## Phase 2.5 (Production Readiness) notes
 

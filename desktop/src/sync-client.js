@@ -89,13 +89,13 @@ class SyncClient {
     return this._req("POST", `/api/devices/${deviceId}/fixes`, { fix }, { auth: "device" });
   }
 
-  async postEvidence(deviceId, dataUrl) {
+  async postEvidence(deviceId, dataUrl, capturedAt) {
     return this._req(
       "POST",
       `/api/devices/${deviceId}/evidence`,
       {
         dataUrl,
-        capturedAt: new Date().toISOString(),
+        capturedAt: capturedAt || new Date().toISOString(),
       },
       { auth: "device" },
     );

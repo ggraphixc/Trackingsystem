@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct ContentView: View {
-    @State private var serverURL = UserDefaults.standard.string(forKey: "server_url") ?? "http://192.168.1.100:4173"
+    @State private var serverURL = UserDefaults.standard.string(forKey: "server_url") ?? "https://dravex.onrender.com"
     @State private var pairCode = ""
     @State private var deviceId = UserDefaults.standard.string(forKey: "device_id")
     @State private var statusMessage = ""

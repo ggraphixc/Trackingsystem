@@ -23,21 +23,42 @@
 const { spawn } = require("child_process");
 const path = require("path");
 const fs = require("fs");
+const http = require("http");
 const { SyncClient } = require("../desktop/src/sync-client");
+const { beaconFor } = require("./beacon");
+
+// --live <base> [--owner-key <key>]: replay scenarios A/B/C against a RUNNING
+// Dravex server (e.g. the live deployment) instead of the hermetic lab server.
+// Owner-scoped steps (mark-lost, transfer, verify, settings, admin) then send
+// `Authorization: Bearer <key>` — required when that server has auth on.
+const LIVE = (() => {
+  const i = process.argv.indexOf("--live");
+  return i > -1 && process.argv[i + 1] ? String(process.argv[i + 1]).replace(/\/+$/, "") : null;
+})();
+const OWNER_KEY = (() => {
+  const i = process.argv.indexOf("--owner-key");
+  return i > -1 && process.argv[i + 1]
+    ? process.argv[i + 1]
+    : process.env.DRAVEX_OWNER_KEY || "";
+})();
 
 // Random high port: a stale lab server from a previous run must never block
 // this one (a fixed port made the lab flaky when a PID leaked on Windows).
 const PORT = 4200 + Math.floor(Math.random() * 200);
-const BASE = `http://127.0.0.1:${PORT}`;
+const BASE = LIVE || `http://127.0.0.1:${PORT}`;
 const DATA_FILE = path.join(__dirname, "lab-data.json");
-const { beaconFor } = require("./beacon");
+const IMEI = LIVE ? "354988079999991" : "354988071234567";
 
 let serverProc = null;
+let captureServer = null;
+let captured = []; // webhook deliveries the lab server POSTed to the capture
 
 async function api(path, body) {
+  const headers = { "Content-Type": "application/json" };
+  if (OWNER_KEY) headers.Authorization = `Bearer ${OWNER_KEY}`;
   const res = await fetch(BASE + path, {
     method: body ? "POST" : "GET",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   return res.json();
@@ -80,11 +101,50 @@ function startServer() {
         DATABASE_URL: "",
         DRAVEX_OWNER_KEY: "",
         RECONNECT_GAP_HOURS: "0.001", // ~3.6 s — simulates the 12 h gap
+        // N4: point the lab server's webhook sink at the local capture and
+        // lower the thresholds so the ops-alert pipeline can be exercised.
+        ALERT_WEBHOOK_URL: captureServer
+          ? `http://127.0.0.1:${captureServer.address().port}/capture`
+          : "",
+        OPS_RATE_LIMIT_STORM: "3",
+        OPS_GEO_MIN_REQUESTS: "3",
+        OPS_GEO_UNRESOLVED_RATIO: "0.5",
+        OPS_ALERT_INTERVAL_S: "3600", // never fires mid-test — scenario D calls it explicitly
       },
       stdio: "ignore",
     });
     resolve();
   });
+}
+
+/** Tiny local webhook receiver — proves ops alerts actually leave the server. */
+function startCapture() {
+  captureServer = http.createServer((req, res) => {
+    let body = "";
+    req.on("data", (c) => (body += c));
+    req.on("end", () => {
+      try {
+        captured.push(JSON.parse(body));
+      } catch (_) {
+        captured.push({ raw: body });
+      }
+      res.writeHead(200).end("ok");
+    });
+  });
+  return new Promise((resolve) =>
+    captureServer.listen(0, "127.0.0.1", () => resolve(captureServer)),
+  );
+}
+
+function stopCapture() {
+  if (captureServer) {
+    try {
+      captureServer.close();
+    } catch (_) {
+      /* ignore */
+    }
+    captureServer = null;
+  }
 }
 
 function stopServer() {
@@ -108,7 +168,7 @@ async function scenarioA(client, deviceId) {
   // 2. Owner marks LOST → recovery code + registry + beacon armed.
   const lost = await api(`/api/devices/${deviceId}/lost`, { lost: true });
   if (!lost.ok || !lost.recoveryCode) throw new Error("A2: mark-lost failed");
-  const reg = await api(`/api/check?q=354988071234567`);
+  const reg = await api(`/api/check?q=${IMEI}`);
   if (reg.status !== "reported_stolen") throw new Error("A2: IMEI not in stolen registry");
   console.log(`[A2] marked lost → recoveryCode ${lost.recoveryCode} · IMEI listed as STOLEN ✓`);
 
@@ -216,73 +276,155 @@ async function scenarioB(client, deviceId) {
 async function scenarioC(owner, deviceId, code) {
   console.log("\n— Scenario C: factory reset / resale —");
   // 1. Device is lost → registry STOLEN.
-  const reg1 = await api(`/api/check?q=354988071234567`);
+  const reg1 = await api(`/api/check?q=${IMEI}`);
   if (reg1.status !== "reported_stolen") throw new Error("C1: expected STOLEN before reset");
   console.log("[C1] pre-reset: IMEI reads STOLEN ✓");
 
   // 2. Factory reset — the app is gone; the NEW owner installs Dravex and
   // checks the IMEI on a fresh install (post-flash Device Check).
   const fresh = new SyncClient(BASE);
-  const check2 = await fresh.checkRegistry("354988071234567");
+  const check2 = await fresh.checkRegistry(IMEI);
   if (!check2 || !check2.found || check2.status !== "reported_stolen") throw new Error("C2: fresh-install check missed");
   console.log("[C2] fresh install Device Check: 🔴 STOLEN — do not use ✓");
 
   // 3. Owner verifies recovery → registry resolves.
   await api(`/api/devices/${deviceId}/verify`, {});
-  const reg3 = await api(`/api/check?q=354988071234567`);
+  const reg3 = await api(`/api/check?q=${IMEI}`);
   if (reg3.found) throw new Error("C3: registry not resolved after verify");
   console.log("[C3] verified recovered → registry clean ✓");
 
   // 4. Second-life: owner transfers to a buyer → new code + clean registry.
   const transfer = await api(`/api/devices/${deviceId}/transfer`, {});
   if (!transfer.ok || !transfer.code) throw new Error("C4: transfer failed");
-  const reg4 = await api(`/api/check?q=354988071234567`);
+  const reg4 = await api(`/api/check?q=${IMEI}`);
   if (reg4.found) throw new Error("C4: registry not cleared on transfer");
   const buyer = new SyncClient(BASE);
-  const claim = await buyer.claim(transfer.code, { hostname: "BUYER-PHONE", serialNumber: "BUY-SN-1", platform: "android", imei: "354988071234567" });
+  const claim = await buyer.claim(transfer.code, { hostname: "BUYER-PHONE", serialNumber: "BUY-SN-1", platform: "android", imei: IMEI });
   if (!claim || claim.deviceId !== deviceId) throw new Error("C4: buyer could not claim");
   console.log(`[C4] verified transfer → buyer claims with fresh code ${transfer.code} ✓`);
 
   // 5. The sold device now reads CLEAN for the next marketplace check.
-  const reg5 = await api(`/api/check?q=354988071234567`);
+  const reg5 = await api(`/api/check?q=${IMEI}`);
   if (reg5.found || reg5.status !== "clean") throw new Error("C5: sold device should read clean");
   console.log("[C5] post-sale check: 🟢 clean (previously reported) ✓");
+  return buyer;
+}
+
+/**
+ * Scenario D — production-readiness (hermetic lab only): N3 retention sweep,
+ * N5 verified-resale pipeline, N4 operator alerting over a real webhook, and
+ * the public counters. Proves the server side of the Phase-2.5/N0-N5 batch.
+ */
+async function scenarioD(client, deviceId) {
+  console.log("\n— Scenario D: production readiness (retention · resale · ops alerting · stats) —");
+
+  // D1 — N3: retention window + purge sweep.
+  const s1 = await api("/api/settings", { evidenceRetentionDays: 30 });
+  if (s1.evidenceRetentionDays !== 30) throw new Error("D1: retention not saved");
+  const old = new Date(Date.now() - 400 * 86400000).toISOString(); // > 30 days
+  const fresh = new Date().toISOString();
+  await client.postFix(deviceId, { lat: 6.5, lng: 3.38, accuracy: 20, source: "ip", timestamp: old, confidence: 50 });
+  await client.postFix(deviceId, { lat: 6.51, lng: 3.39, accuracy: 20, source: "ip", timestamp: fresh, confidence: 50 });
+  await client.postEvidence(deviceId, "data:image/jpeg;base64,OLD_PHOTO", old);
+  await client.postEvidence(deviceId, "data:image/jpeg;base64,FRESH_PHOTO", fresh);
+  const purge = await api("/api/admin/purge", {});
+  if (!purge.ok) throw new Error("D1: purge endpoint failed");
+  const fixes = await api(`/api/devices/${deviceId}/fixes?limit=50`);
+  const evidence = await api(`/api/devices/${deviceId}/evidence`);
+  if (fixes.some((f) => f.timestamp === old)) throw new Error("D1: old fix survived purge");
+  if (evidence.some((e) => e.capturedAt === old)) throw new Error("D1: old evidence survived purge");
+  if (purge.purged.fixes < 1 || purge.purged.evidence < 1) throw new Error("D1: purge counts wrong");
+  console.log(`[D1] retention 30 days → purge removed ${purge.purged.fixes} fix(es), ${purge.purged.evidence} evidence, ${purge.purged.sightings} sightings ✓`);
+
+  // D2 — N5: verified resale listing (only transferred devices can be listed).
+  const transfer = await api(`/api/devices/${deviceId}/transfer`, {});
+  if (!transfer.ok) throw new Error("D2: transfer failed");
+  const list = await api("/api/listings", { deviceId, price: 125000, condition: "Good" });
+  if (!list.ok) throw new Error("D2: listing failed");
+  const browse = await api("/api/listings");
+  if (!browse.listings.some((l) => l.deviceId === deviceId && l.price === 125000)) throw new Error("D2: listing not in browse");
+  const chk = await api(`/api/check?q=${IMEI}`);
+  if (!chk.resaleReady) throw new Error("D2: check did not flag verified resale-ready");
+  const interest = await api(`/api/listings/${deviceId}/interest`, { message: "I want to buy this — Olu from Lagos" });
+  if (!interest.ok) throw new Error("D2: buyer interest failed");
+  const alerts = (await api("/api/alerts/latest")).alerts;
+  if (!alerts.some((a) => a.type === "interest" && a.deviceId === deviceId)) throw new Error("D2: interest alert missing");
+  await api("/api/listings/unlist", { deviceId });
+  const chk2 = await api(`/api/check?q=${IMEI}`);
+  if (chk2.resaleReady) throw new Error("D2: unlist did not clear resale-ready");
+  console.log("[D2] transfer → listing → public check 'verified resale-ready' → buyer interest alert → unlist ✓");
+
+  // D3 — N4: rate-limit/abuse storm → ops alert reaches the webhook.
+  for (let i = 0; i < 40; i++) await api("/api/check?q=99999999"); // trip the 30/min check limiter
+  const check = await api("/api/admin/ops-check", {});
+  if (!check.ok || !Array.isArray(check.fired)) throw new Error("D3: ops-check failed");
+  const storm = check.fired.find((c) => c.includes("rate-limit/abuse storm"));
+  if (!storm) throw new Error(`D3: rate-limit storm not detected (fired=${JSON.stringify(check.fired)})`);
+  await sleep(1500); // let the fire-and-forget webhook delivery land
+  const opsHook = captured.find((h) => h.alert && h.alert.type === "ops");
+  if (!opsHook) throw new Error("D3: ops alert did not reach the webhook capture");
+  console.log(`[D3] ops alert fired ("${storm}") → delivered to ALERT_WEBHOOK_URL ✓`);
+
+  // D4 — public counters for the landing page.
+  const stats = await api("/api/stats");
+  if (!stats.ok || typeof stats.protected !== "number" || stats.protected < 1) throw new Error("D4: stats broken");
+  console.log(`[D4] public stats: protected=${stats.protected} recovered=${stats.recovered} sighted=${stats.sighted} listings=${stats.listings} ✓`);
   return true;
 }
 
 (async () => {
   console.log("== Dravex theft simulation lab ==");
-  await startServer();
+  if (LIVE) {
+    console.log(`LIVE mode: running against ${LIVE} — this creates test devices on that server`);
+    if (OWNER_KEY) console.log("LIVE mode: owner key provided for owner-scoped steps");
+    else console.warn("LIVE mode: no --owner-key — steps that need owner auth will fail on a locked server");
+  } else {
+    await startCapture();
+    await startServer();
+  }
   if (!(await waitHealth())) {
     stopServer();
-    throw new Error("Lab server did not start");
+    stopCapture();
+    throw new Error(LIVE ? "Live server unreachable" : "Lab server did not start");
   }
-  console.log(`lab server up on :${PORT}`);
+  console.log(`${LIVE ? "live" : "lab"} server reachable at ${BASE}`);
+
+  const tag = LIVE ? "LIVE-" : "";
 
   // --- A: Android ---
   const pairA = await api("/api/pair/register", { label: "PHONE-1" });
   const clientA = new SyncClient(BASE);
-  const claimA = await clientA.claim(pairA.code, { hostname: "TECNO-PHONE", serialNumber: "PH-SN-1", platform: "android", imei: "354988071234567" });
+  const claimA = await clientA.claim(pairA.code, { hostname: `${tag}TECNO-PHONE`, serialNumber: "PH-SN-1", platform: "android", imei: IMEI });
   if (!claimA?.deviceId) throw new Error("A0: claim failed");
   await scenarioA(clientA, claimA.deviceId);
 
   // --- B: Laptop ---
   const pairB = await api("/api/pair/register", { label: "LAPTOP-1" });
   const clientB = new SyncClient(BASE);
-  const claimB = await clientB.claim(pairB.code, { hostname: "HP-ELITEBOOK", serialNumber: "SN-HP-2026", platform: "win32" });
+  const claimB = await clientB.claim(pairB.code, { hostname: `${tag}HP-ELITEBOOK`, serialNumber: "SN-HP-2026", platform: "win32" });
   await scenarioB(clientB, claimB.deviceId);
 
   // --- C: Reset/resale on the phone from A (re-lost first) ---
   await api(`/api/devices/${claimA.deviceId}/lost`, { lost: true });
-  await scenarioC(null, claimA.deviceId, pairA.code);
+  const buyer = await scenarioC(null, claimA.deviceId, pairA.code);
 
-  console.log("\n== THEFT LAB PASSED — all three scenarios ==\n");
+  // --- D: production-readiness (hermetic lab only — needs the webhook
+  // capture + tuned thresholds that a live server does not have). ---
+  if (!LIVE) {
+    await scenarioD(buyer, claimA.deviceId);
+    console.log("\n== THEFT LAB PASSED — scenarios A, B, C and D ==\n");
+  } else {
+    console.log("\n== THEFT LAB PASSED — scenarios A, B, C against the live server ==\n");
+    console.log("Scenario D (retention/resale/ops/stats) runs only in hermetic mode.");
+  }
   stopServer();
+  stopCapture();
 })().then(
   () => {},
   (e) => {
     console.error("THEFT LAB FAILED:", e.message);
     stopServer();
+    stopCapture();
     process.exit(1);
   },
 );

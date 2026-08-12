@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { getAdminHealth, retryDelivery } from "@/lib/api";
+import { getAdminHealth, retryDelivery, runOpsCheck, runPurge } from "@/lib/api";
 import type { AdminHealth } from "@/lib/api";
 import {
   AlertTriangleIcon,
@@ -78,6 +78,23 @@ export default function AdminPage() {
     if (health.security.rateLimited > 0) issues.push(`${health.security.rateLimited} request(s) rate-limited`);
     if (health.security.denied401 > 0) issues.push(`${health.security.denied401} rejected auth attempt(s)`);
     if (health.devices.offline > 0) issues.push(`${health.devices.offline} device(s) offline`);
+    if (health.ops?.last?.length) issues.push(...health.ops.last);
+  }
+
+  async function opsCheck() {
+    const res = await runOpsCheck();
+    setNote(res?.fired?.length
+      ? `Ops check fired: ${res.fired.join(" · ")}`
+      : "Ops check clean — no thresholds breached.");
+    load();
+  }
+
+  async function purgeNow() {
+    const res = await runPurge();
+    setNote(res?.ok
+      ? `Purged ${res.purged?.evidence ?? 0} evidence, ${res.purged?.fixes ?? 0} fixes, ${res.purged?.sightings ?? 0} sightings (${res.days ?? 90} days window).`
+      : "Purge requires the owner key.");
+    load();
   }
 
   return (
@@ -180,6 +197,47 @@ export default function AdminPage() {
                   {health.alerts.raised} alerts raised since boot
                 </p>
               </div>
+            </Card>
+          </div>
+
+          {/* N4: operator health-check status + N3 retention sweep */}
+          <div className="mb-6 grid gap-3 lg:grid-cols-2">
+            <Card className="p-5">
+              <p className="text-xs font-medium text-ink">Operator health checks (N4)</p>
+              <p className="mt-1 text-[11px] text-ink-faint">
+                {health.ops?.checks ?? 0} check(s) run · {health.ops?.fired ?? 0} alert(s) fired · last{" "}
+                {health.ops?.lastAt ? new Date(health.ops.lastAt).toLocaleString("en-NG") : "never"}
+              </p>
+              {health.ops.last?.length ? (
+                <ul className="mt-2 space-y-1">
+                  {health.ops.last.map((c) => (
+                    <li key={c} className="flex items-center gap-1.5 text-[11px] text-amber-700">
+                      <AlertTriangleIcon className="h-3 w-3 shrink-0" />
+                      {c}
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="mt-2 text-[11px] text-emerald-700">No thresholds breached.</p>
+              )}
+              <button className="btn-ghost mt-3 text-xs" onClick={opsCheck}>
+                Run check now
+              </button>
+            </Card>
+            <Card className="p-5">
+              <p className="text-xs font-medium text-ink">Evidence retention (N3 · NDPA)</p>
+              <p className="mt-1 text-[11px] text-ink-faint">
+                {health.retention?.days ?? 90} days · {health.retention?.purge?.runs ?? 0} sweep(s) ·{" "}
+                {health.retention?.purge?.evidence ?? 0} evidence /{" "}
+                {health.retention?.purge?.fixes ?? 0} fixes / {health.retention?.purge?.sightings ?? 0}{" "}
+                sightings purged
+                {health.retention?.purge?.lastAt
+                  ? ` · last ${new Date(health.retention.purge.lastAt).toLocaleString("en-NG")}`
+                  : ""}
+              </p>
+              <button className="btn-ghost mt-3 text-xs" onClick={purgeNow}>
+                Purge now
+              </button>
             </Card>
           </div>
 

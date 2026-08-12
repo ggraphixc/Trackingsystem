@@ -298,6 +298,13 @@ Zero-dependency Node HTTP server; dual-mode storage (JSON file ↔ Postgres when
 | `GET /api/nearest` | owner | nearest device fix to a point (PostGIS `ST_Distance` on Neon / haversine in file mode) |
 | `GET /api/devices/:id/sightings` | owner/device | community sightings |
 | `GET/POST /api/devices/:id/evidence` | owner/device / device | webcam evidence |
+| `GET /api/listings` | public | verified-resale browse (generic labels, price, condition) |
+| `POST /api/listings` | owner | list a **transferred** device for verified resale (price + condition) |
+| `POST /api/listings/unlist` | owner | pull a listing |
+| `POST /api/listings/:id/interest` | public (rate-limited) | buyer interest → private owner alert |
+| `GET /api/stats` | public | network counters: protected, recovered, sighted, listings (landing page) |
+| `POST /api/admin/purge` | operator | run the N3 retention sweep now |
+| `POST /api/admin/ops-check` | operator | evaluate N4 health thresholds now (webhook on breach) |
 | `GET/POST /api/devices/:id/commands` + `/ack` | device poll / owner queue | remote commands |
 | `POST /api/devices/:id/token` | owner | rotate agent credential |
 | `GET /api/alerts/latest`, `POST /api/alerts/read` | owner | alert feed |
@@ -452,6 +459,13 @@ identity that survives battery swaps. Server resolves static tag beacons via
 - **Registry ethics:** anonymous sightings, generic public labels, only the
   owner sees exact coordinates; legal review against vigilantism.
 - **SMS:** Nigerian-friendly via Twilio/Termii (log mode until configured).
+- **Data-minimization (N3):** location fixes, webcam evidence and community
+  sightings are automatically purged past the owner-configured
+  `evidenceRetentionDays` window (default 90 days, clamped 30–730; sweep at
+  boot + every 6 h + on-demand `POST /api/admin/purge`). Only the most recent
+  fix and the `lastFix` snapshot are always retained so recovery stays
+  usable. Webcam photos are the highest-risk data class and never follow a
+  transferred device (purged on `transfer`).
 - **Operator/NCC:** IMEI trace requires police (NPF NCCC/CRP) → carriers;
   NCC IMEI DMS is a partnership path, not an app feature.
 

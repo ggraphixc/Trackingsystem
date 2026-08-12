@@ -10,17 +10,20 @@ import {
   getOwnerKey,
   getSessionToken,
   getSettings,
+  listDevice,
   listDevices,
   loginAccount,
   logoutAccount,
   registerAccount,
   resetPassword,
   registerPair,
+  runPurge,
   saveSettings,
   sendCommand,
   sendTestSms,
   setDeviceLost,
   setOwnerKey,
+  unlistDevice,
 } from "@/lib/api";
 import type { PairedDevice, ServerSettings, SessionUser } from "@/lib/api";
 import DeviceAlerts from "@/components/device-alerts";
@@ -33,8 +36,10 @@ import {
   LockClosedIcon,
   MapPinIcon,
   PhoneIcon,
+  RecycleIcon,
   RefreshIcon,
   ServerIcon,
+  ShieldCheckIcon,
   SignalIcon,
   UserIcon,
   WifiIcon,
@@ -81,12 +86,21 @@ export default function AgentsPage() {
   const [resetPw, setResetPw] = useState("");
   const [resetBusy, setResetBusy] = useState(false);
   const [resetNote, setResetNote] = useState("");
+  // N5 verified resale + N3 retention controls.
+  const [listingTarget, setListingTarget] = useState<string | null>(null);
+  const [listingPrice, setListingPrice] = useState("");
+  const [listingCondition, setListingCondition] = useState("");
+  const [listingBusy, setListingBusy] = useState(false);
+  const [retentionDays, setRetentionDays] = useState(90);
 
   const load = useCallback(async () => {
     setServer(await checkServerHealth());
     setDevices(await listDevices());
     const next = await getSettings();
-    if (next) setSettings(next);
+    if (next) {
+      setSettings(next);
+      setRetentionDays(next.evidenceRetentionDays ?? 90);
+    }
     // Only probe the session when one is actually stored — otherwise the 8s
     // poll fires a 401 every 8s and inflates the server's auth-anomaly count.
     if (getSessionToken()) setUser(await getMe());
@@ -96,6 +110,53 @@ export default function AgentsPage() {
     setSmsNote(msg);
     setTimeout(() => setSmsNote(""), 6000);
   };
+
+  /* ---------- N3: retention + N5: verified resale ---------- */
+
+  async function saveRetention() {
+    const days = Number(retentionDays);
+    if (!Number.isFinite(days) || days < 30 || days > 730) {
+      flash("Retention must be 30–730 days.");
+      return;
+    }
+    const res = await saveSettings({ evidenceRetentionDays: Math.floor(days) });
+    if (res) {
+      flash(`Evidence retention set to ${res.evidenceRetentionDays} days.`);
+      load();
+    } else flash("Could not save retention — check your owner key or sign in.");
+  }
+
+  async function purgeNow() {
+    const res = await runPurge();
+    if (res?.ok) {
+      flash(
+        `Purged: ${res.purged?.evidence ?? 0} evidence, ${res.purged?.fixes ?? 0} fixes, ${res.purged?.sightings ?? 0} sightings (${res.days ?? 90} days).`,
+      );
+    } else flash("Purge requires operator auth (owner key).");
+  }
+
+  async function listForResale(deviceId: string) {
+    const price = Number(listingPrice);
+    if (!Number.isFinite(price) || price < 0) return flash("Enter a valid price in NGN.");
+    if (!listingCondition.trim()) return flash("Enter a condition (e.g. Good, Fair, Refurbished).");
+    setListingBusy(true);
+    const res = await listDevice(deviceId, price, listingCondition.trim());
+    setListingBusy(false);
+    if (res?.ok) {
+      setListingTarget(null);
+      setListingPrice("");
+      setListingCondition("");
+      flash("Listed for verified resale.");
+      load();
+    } else flash("Could not list — only transferred devices can be listed (owner auth required).");
+  }
+
+  async function removeListing(deviceId: string) {
+    if (await unlistDevice(deviceId)) {
+      flash("Listing removed.");
+      load();
+    } else flash("Could not remove the listing.");
+  }
 
   async function saveSms() {
     setSmsBusy(true);
@@ -519,6 +580,32 @@ export default function AgentsPage() {
           <span className="font-mono">TWILIO_ACCOUNT_SID / AUTH_TOKEN / PHONE_NUMBER</span> or{" "}
           <span className="font-mono">TERMII_API_KEY / FROM</span> to the server env to send for real.
         </p>
+
+        {/* N3: NDPA data-minimization — evidence retention window */}
+        <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-slate-100 pt-4">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs font-medium text-ink">Evidence retention (NDPA)</p>
+            <p className="mt-0.5 text-[11px] text-ink-faint">
+              Fixes, webcam evidence and sightings older than this window are purged automatically
+              (30–730 days).
+            </p>
+          </div>
+          <input
+            className="input w-24 text-center font-mono"
+            type="number"
+            min={30}
+            max={730}
+            value={retentionDays}
+            onChange={(e) => setRetentionDays(Number(e.target.value) || 30)}
+            aria-label="Evidence retention in days"
+          />
+          <button className="btn-ghost text-xs" onClick={saveRetention}>
+            Save
+          </button>
+          <button className="btn-ghost text-xs" onClick={purgeNow}>
+            Purge now
+          </button>
+        </div>
       </Card>
 
       {/* Pairing */}
@@ -674,6 +761,78 @@ export default function AgentsPage() {
                 ) : (
                   <p className="mt-4 text-xs text-ink-faint">Waiting for the first location fix…</p>
                 )}
+
+                {/* N5: verified resale — only after a legitimate transfer */}
+                {d.transferredAt ? (
+                  <div className="mt-4 rounded-xl border border-emerald-100 bg-emerald-50/60 p-3.5">
+                    {d.listing ? (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-800">
+                            <ShieldCheckIcon className="h-3.5 w-3.5" />
+                            Listed for verified resale
+                          </p>
+                          <p className="mt-1 text-[11px] text-emerald-700">
+                            ₦{d.listing.price.toLocaleString("en-NG")} · {d.listing.condition} ·{" "}
+                            {d.listing.interestCount} interested buyer(s)
+                          </p>
+                        </div>
+                        <button className="btn-ghost !px-2 text-xs" onClick={() => removeListing(d.deviceId)}>
+                          Remove listing
+                        </button>
+                      </div>
+                    ) : listingTarget === d.deviceId ? (
+                      <div className="space-y-2">
+                        <p className="flex items-center gap-1.5 text-xs font-medium text-emerald-800">
+                          <RecycleIcon className="h-3.5 w-3.5" />
+                          List this transferred device for verified resale
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            className="input w-36 font-mono"
+                            placeholder="Price (₦)"
+                            inputMode="numeric"
+                            value={listingPrice}
+                            onChange={(e) => setListingPrice(e.target.value)}
+                            aria-label="Resale price in NGN"
+                          />
+                          <input
+                            className="input min-w-36 flex-1"
+                            placeholder="Condition (Good, Fair, Refurbished…)"
+                            value={listingCondition}
+                            onChange={(e) => setListingCondition(e.target.value)}
+                            aria-label="Device condition"
+                          />
+                          <button
+                            className="btn-secondary !px-3 text-xs"
+                            disabled={listingBusy}
+                            onClick={() => listForResale(d.deviceId)}
+                          >
+                            {listingBusy ? "Listing…" : "List now"}
+                          </button>
+                          <button
+                            className="btn-ghost !px-2 text-xs"
+                            onClick={() => setListingTarget(null)}
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-xs font-medium text-emerald-800">
+                          Ownership transferred — ready for verified resale
+                        </p>
+                        <button
+                          className="btn-secondary !px-3 text-xs"
+                          onClick={() => setListingTarget(d.deviceId)}
+                        >
+                          List for resale
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ) : null}
 
                 {/* Community sightings — a Dravex phone heard its beacon */}
                 {sightings.length > 0 ? (

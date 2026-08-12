@@ -186,6 +186,22 @@ export default function SerialCheckPage() {
                   inserted.
                 </p>
               ) : null}
+
+              {/* N5: verified resale listing — the legitimate second-life market */}
+              {verdict.resaleReady && verdict.listing ? (
+                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4">
+                  <p className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
+                    <ShieldCheckIcon className="h-4 w-4" />
+                    Verified resale-ready
+                  </p>
+                  <p className="mt-1 text-xs text-emerald-700">
+                    This device went through the Dravex ownership transfer — registry clean, previous
+                    owner{"'"}s data purged. It is listed by its current owner for{" "}
+                    <strong>₦{verdict.listing.price.toLocaleString("en-NG")}</strong>{" "}
+                    (condition: {verdict.listing.condition}). Legitimate sellers have nothing to hide.
+                  </p>
+                </div>
+              ) : null}
             </div>
           </div>
         </Card>
