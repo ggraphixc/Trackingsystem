@@ -3,8 +3,7 @@
  *
  * Points at the local sync server (server/) by default; set
  * NEXT_PUBLIC_SYNC_SERVER_URL at build time to point at the deployed server
- * (see docs/DEPLOY.md). In production this becomes the Appwrite Cloud SDK —
- * same shape, different transport.
+ * (see docs/DEPLOY.md).
  */
 
 const SERVER_URL_ENV =
@@ -12,7 +11,9 @@ const SERVER_URL_ENV =
     (process.env.NEXT_PUBLIC_SYNC_SERVER_URL ||
       // Production fallback: a Vercel deploy without the env var must still
       // reach the LIVE API instead of silently breaking against localhost.
-      (process.env.NODE_ENV === "production" ? "https://tracknaija.onrender.com" : ""))) ||
+      // The Dravex API lives on Render at dravex.onrender.com (the old
+      // tracknaija.onrender.com service is retired — everything 404s).
+      (process.env.NODE_ENV === "production" ? "https://dravex.onrender.com" : ""))) ||
   "http://localhost:4173";
 // Trailing slash would produce "//api/…" paths that the sync server's URL
 // parser misreads as a network-path reference — strip it once here.
