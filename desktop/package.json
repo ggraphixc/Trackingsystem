@@ -6,40 +6,24 @@
   "author": "TrackNaija",
   "license": "MIT",
   "scripts": {
-    "icon": "node scripts/generate-icon.js",
+    "icon": "node scripts/generate-app-icon.js",
     "start": "electron .",
     "dev": "electron . --dev",
     "dist": "electron-builder",
-    "check": "node --check src/main.js && node --check src/preload.js && node --check src/tracking-engine.js && node --check src/commands.js && node --check src/ui.js && node --check src/offline-vault.js && node --check src/sync-client.js && node --check src/ble-scan.js && node --check scripts/generate-icon.js && node --check src/renderer/app.js"
+    "check": "node --check src/main.js && node --check src/preload.js && node --check src/tracking-engine.js && node --check src/commands.js && node --check src/ui.js && node --check src/offline-vault.js && node --check src/sync-client.js && node --check src/ble-scan.js && node --check scripts/generate-app-icon.js && node --check src/renderer/app.js"
   },
   "devDependencies": {
     "electron": "^33.2.0",
     "electron-builder": "^25.1.8"
-  },
-  "build": {
+  },  "build": {
     "appId": "com.tracknaija.agent",
     "productName": "TrackNaija Agent",
-    "files": [
-      "src/**/*",
-      "assets/**/*"
-    ],
-    "win": {
-      "target": [
-        "nsis"
-      ]
-    },
-    "mac": {
-      "target": [
-        "dmg"
-      ],
-      "category": "public.app-category.utilities"
-    },
-    "linux": {
-      "target": [
-        "AppImage"
-      ],
-      "category": "Utility"
-    }
+    "files": ["src/**/*", "assets/**/*"],
+    "directories": { "buildResources": "build" },
+    "icon": "build/icon.png",
+    "win": { "target": ["nsis"], "icon": "build/icon.png" },
+    "mac": { "target": ["dmg"], "category": "public.app-category.utilities", "icon": "build/icon.png" },
+    "linux": { "target": ["AppImage"], "category": "Utility", "icon": "build/icon.png" }
   },
   "dependencies": {
     "leaflet": "^1.9.4"

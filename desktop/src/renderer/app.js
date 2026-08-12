@@ -82,6 +82,7 @@
     refreshVault();
     refreshDevices();
     refreshAlerts();
+    loadReportInfo();
 
     setInterval(refreshVault, 30000);
     setInterval(refreshDevices, 20000); // devices stay live in the background
@@ -575,13 +576,51 @@
 
   /* ================= incident report ================= */
 
+  let reportInfo = { ownerName: "", ownerPhone: "", policeStation: "" };
+
+  async function loadReportInfo() {
+    const info = (await api.getReportInfo()) || {};
+    reportInfo = {
+      ownerName: info.ownerName || "",
+      ownerPhone: info.ownerPhone || "",
+      policeStation: info.policeStation || "",
+    };
+    $("report-owner").value = reportInfo.ownerName;
+    $("report-phone").value = reportInfo.ownerPhone;
+    $("report-station").value = reportInfo.policeStation;
+  }
+
+  async function saveReportInfo() {
+    $("btn-save-report-info").disabled = true;
+    const info = await api.setReportInfo({
+      ownerName: $("report-owner").value,
+      ownerPhone: $("report-phone").value,
+      policeStation: $("report-station").value,
+    });
+    $("btn-save-report-info").disabled = false;
+    if (info) {
+      reportInfo = {
+        ownerName: info.ownerName || "",
+        ownerPhone: info.ownerPhone || "",
+        policeStation: info.policeStation || "",
+      };
+      $("report-info-note").textContent =
+        "Saved — incident reports now include " +
+        (reportInfo.ownerName || "your name") +
+        (reportInfo.policeStation ? ` · station: ${reportInfo.policeStation}` : "") +
+        ".";
+    } else {
+      $("report-info-note").textContent = "Could not save — is the agent running normally?";
+    }
+  }
+
   async function openReport(deviceId) {
     const res = await api.getDeviceDetail(deviceId);
     if (!res || !res.ok || !res.device) {
       alert("Could not load report data — is the server reachable?");
       return;
     }
-    const html = buildReportHtml(res, devices); // all devices → real closest-tracker
+    const html = buildReportHtml(res, devices, reportInfo); // all devices → real closest-tracker
 
     const dev = res.device;
     const slug = String(dev.hostname || "device").replace(/[^a-zA-Z0-9]+/g, "-").toLowerCase() || "device";
@@ -600,7 +639,7 @@
     return `<tr><th>${escapeHtml(label)}</th><td class="${extraClass || ""}">${value}</td></tr>`;
   }
 
-  function buildReportHtml(res, allDevices) {
+  function buildReportHtml(res, allDevices, info) {
     const dev = res.device;
     const fixes = res.fixes || [];
     const sightings = res.sightings || [];
@@ -710,6 +749,7 @@
   .badge-lost { background: #fef2f2; color: #dc2626; }
   .badge-safe { background: #ecfdf5; color: #059669; }
   .box { border: 1px solid #e2e8f0; border-radius: 10px; padding: 12px 14px; background: #f8fafc; font-size: 13px; }
+  .reporter { border-color: #fca5a5; background: #fff7f7; margin: 14px 0 0; }
   .box p { margin: 4px 0; }
   .dim { color: #94a3b8; }
   .photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
@@ -724,6 +764,13 @@
   <p class="brand">TRACKNAIJA</p>
   <h1>Incident Report — ${escapeHtml(dev.hostname || "Unnamed device")}</h1>
   <p class="meta">Generated ${now} · Device ID ${escapeHtml(String(dev.deviceId || "").slice(0, 8))}</p>
+
+  ${info && (info.ownerName || info.ownerPhone || info.policeStation)
+    ? `<div class="box reporter">
+        <p><b>Reported by</b>${info.policeStation ? ` — for submission to ${escapeHtml(info.policeStation)}` : ""}</p>
+        <p>${escapeHtml(info.ownerName || "—")}${info.ownerPhone ? ` · ${escapeHtml(info.ownerPhone)}` : ""}</p>
+      </div>`
+    : ""}
 
   <h2>Device</h2>
   <table>${rows}</table>
@@ -1046,6 +1093,7 @@
 
     $("btn-server").addEventListener("click", testServer);
     $("btn-link").addEventListener("click", linkAgent);
+    $("btn-save-report-info").addEventListener("click", saveReportInfo);
     $("btn-open-dashboard").addEventListener("click", () => {
       const url = $("server-url").value.trim() || "http://localhost:4173";
       api.openUrl(url);

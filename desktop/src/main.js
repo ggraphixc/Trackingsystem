@@ -358,10 +358,36 @@ ipcMain.handle("agent:get-device-detail", async (_e, deviceId) => {
   };
 });
 
+/** Report header details (owner name, phone, police station) for incident reports. */
+ipcMain.handle("agent:get-report-info", () => {
+  const s = loadState();
+  return {
+    ownerName: s.reportOwner || "",
+    ownerPhone: s.reportPhone || "",
+    policeStation: s.reportStation || "",
+  };
+});
+
+ipcMain.handle("agent:set-report-info", (_e, info) => {
+  const clean = (v) => String(v || "").trim().slice(0, 120);
+  const s = saveState({
+    reportOwner: clean(info && info.ownerName),
+    reportPhone: clean(info && info.ownerPhone),
+    reportStation: clean(info && info.policeStation),
+  });
+  return {
+    ownerName: s.reportOwner || "",
+    ownerPhone: s.reportPhone || "",
+    policeStation: s.reportStation || "",
+  };
+});
+
 /** Write a generated report to Downloads and open it in the browser. */
 ipcMain.handle("agent:save-report", async (_e, html, filename) => {
   try {
-    const safeName = String(filename || "tracknaija-report.html").replace(/[^a-zA-Z0-9._-]/g, "-");
+    // The renderer always prefixes with "TrackNaija-Report-", so reserved
+  // Windows device names (CON/NUL/…) can never be the whole filename.
+  const safeName = String(filename || "tracknaija-report.html").replace(/[^a-zA-Z0-9._-]/g, "-");
     const dir = app.getPath("downloads");
     const outPath = path.join(dir, safeName);
     fs.writeFileSync(outPath, String(html), "utf8");

@@ -24,6 +24,8 @@ app.whenReady().then(() => {
   ipcMain.handle("agent:vault-status", () => ({ pending: 0, evidence: 0 }));
   ipcMain.handle("agent:list-devices", () => ({ ok: false, devices: [] }));
   ipcMain.handle("agent:get-alerts", () => ({ ok: false, alerts: [] }));
+  ipcMain.handle("agent:get-report-info", () => ({ ownerName: "", ownerPhone: "", policeStation: "" }));
+  ipcMain.handle("agent:set-report-info", () => ({ ownerName: "", ownerPhone: "", policeStation: "" }));
   ipcMain.handle("agent:get-sightings", () => ({ ok: false, sightings: [] }));
   ipcMain.handle("agent:get-evidence", () => ({ ok: false, evidence: [] }));
   ipcMain.handle("agent:track-now", () => null);
@@ -72,6 +74,8 @@ app.whenReady().then(() => {
             mapActive: !!document.getElementById('view-map').classList.contains('active'),
             hasEvidenceModal: view('evidence-modal') && view('evidence-grid') && view('lightbox'),
             reportBridge: typeof window.tracknaija.getDeviceDetail === 'function' && typeof window.tracknaija.saveReport === 'function',
+            reportInfoBridge: typeof window.tracknaija.getReportInfo === 'function' && typeof window.tracknaija.setReportInfo === 'function',
+            hasReportInfoCard: view('report-owner') && view('report-phone') && view('report-station') && view('btn-save-report-info'),
             mapLegendItems: q('.legend-item'),
             statusChip: (document.getElementById('status-chip')||{}).textContent || '',
             bridge: typeof window.tracknaija === 'object' && typeof window.tracknaija.listDevices === 'function',
@@ -93,6 +97,8 @@ app.whenReady().then(() => {
           report.mapActive &&
           report.hasEvidenceModal &&
           report.reportBridge &&
+          report.reportInfoBridge &&
+          report.hasReportInfoCard &&
           report.mapLegendItems === 4 &&
           report.bridge &&
           report.ladderRows === 3;

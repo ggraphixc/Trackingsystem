@@ -20,6 +20,8 @@ contextBridge.exposeInMainWorld("tracknaija", {
   getEvidence: (deviceId) => ipcRenderer.invoke("agent:get-evidence", deviceId),
   getDeviceDetail: (deviceId) => ipcRenderer.invoke("agent:get-device-detail", deviceId),
   saveReport: (html, filename) => ipcRenderer.invoke("agent:save-report", html, filename),
+  getReportInfo: () => ipcRenderer.invoke("agent:get-report-info"),
+  setReportInfo: (info) => ipcRenderer.invoke("agent:set-report-info", info),
   scanNearby: (durationSec) => ipcRenderer.invoke("agent:scan-nearby", durationSec),
   getAlerts: () => ipcRenderer.invoke("agent:get-alerts"),
   markAlertRead: (id) => ipcRenderer.invoke("agent:mark-alert-read", id),

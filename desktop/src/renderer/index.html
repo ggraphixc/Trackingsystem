@@ -341,6 +341,26 @@
                 internet are stored locally and uploaded the moment it reconnects.
               </p>
             </section>
+
+            <section class="card">
+              <div class="card-head">
+                <h2>Incident report details</h2>
+                <span class="chip chip-amber">NPF submission</span>
+              </div>
+              <p class="meta">
+                These details are printed on every exported incident report, so the document is ready to hand to the
+                police (NPF/SCID) for IMEI tracing. Stored only on this machine.
+              </p>
+              <div class="link-row">
+                <input id="report-owner" class="input" placeholder="Your name" aria-label="Your name" maxlength="120" />
+                <input id="report-phone" class="input mono" placeholder="Phone, e.g. +2348012345678" aria-label="Your phone number" maxlength="120" />
+                <input id="report-station" class="input" placeholder="Police station, e.g. SCID Ikeja Lagos" aria-label="Police station" maxlength="120" />
+              </div>
+              <div class="btn-grid">
+                <button id="btn-save-report-info" class="btn btn-ghost btn-sm">Save report details</button>
+              </div>
+              <p id="report-info-note" class="meta"></p>
+            </section>
           </div>
         </section>
       </main>
