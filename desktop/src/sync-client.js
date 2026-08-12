@@ -68,7 +68,7 @@ class SyncClient {
 
   /** Agent claims a pairing code issued by the dashboard. */
   async claim(code, info) {
-    return this._req(
+    const res = await this._req(
       "POST",
       "/api/pair/claim",
       {
@@ -83,6 +83,11 @@ class SyncClient {
       },
       { auth: "none" },
     );
+    // Store the device credential issued at claim so every downstream
+    // device-scoped call (fixes/events/lost) is authenticated automatically.
+    // Callers may still override via setDeviceToken() afterwards.
+    if (res && res.token) this.setDeviceToken(res.token);
+    return res;
   }
 
   async postFix(deviceId, fix) {
