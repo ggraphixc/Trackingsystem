@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("tracknaija", {
   listDevices: () => ipcRenderer.invoke("agent:list-devices"),
   setDeviceLost: (deviceId, lost) => ipcRenderer.invoke("agent:set-device-lost", deviceId, lost),
   getSightings: (deviceId) => ipcRenderer.invoke("agent:get-sightings", deviceId),
+  getEvidence: (deviceId) => ipcRenderer.invoke("agent:get-evidence", deviceId),
   scanNearby: (durationSec) => ipcRenderer.invoke("agent:scan-nearby", durationSec),
   getAlerts: () => ipcRenderer.invoke("agent:get-alerts"),
   markAlertRead: (id) => ipcRenderer.invoke("agent:mark-alert-read", id),

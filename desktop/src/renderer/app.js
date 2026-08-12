@@ -17,6 +17,7 @@
   const VIEW_META = {
     overview: { title: "Overview", sub: "Live tracking at a glance" },
     devices: { title: "Devices", sub: "Every phone and laptop you protect" },
+    map: { title: "Map", sub: "Device fixes and community sightings" },
     finder: { title: "Find nearby", sub: "Bluetooth relay — hear lost beacons" },
     alerts: { title: "Alerts", sub: "Reconnects, SIM changes, sightings" },
     settings: { title: "Settings", sub: "Server link, sync and protection" },
@@ -33,6 +34,7 @@
     $("view-title").textContent = meta.title;
     $("view-subtitle").textContent = meta.sub;
     if (name === "devices") refreshDevices();
+    if (name === "map") { initMap(); renderMap(); }
     if (name === "alerts") refreshAlerts();
   }
 
@@ -252,7 +254,11 @@
             : '<span class="chip chip-gray">Offline</span>';
         const sightings = d.sightingCount || 0;
         const sight = sightings > 0
-          ? `<button class="btn-lost" data-sightings="${escapeHtml(d.deviceId)}" title="Community sightings for this device">👁 ${sightings}</button>`
+          ? `<button class="btn-icon sightings" data-sightings="${escapeHtml(d.deviceId)}" title="Community sightings for this device">👁 ${sightings}</button>`
+          : "";
+        const evidence = d.evidenceCount || 0;
+        const ev = evidence > 0
+          ? `<button class="btn-icon evidence" data-evidence-id="${escapeHtml(d.deviceId)}" title="Captured evidence photos">📷 ${evidence}</button>`
           : "";
         return `<tr>
           <td>
@@ -269,7 +275,7 @@
             <button class="btn-lost ${d.lost ? "lost" : ""}" data-lost-id="${escapeHtml(d.deviceId)}" data-lost="${d.lost ? "1" : "0"}">
               ${d.lost ? "Lost — click to find" : "Mark lost"}
             </button>
-            ${sight}
+            ${sight}${ev}
           </td>
         </tr>`;
       })
@@ -286,9 +292,14 @@
     document.querySelectorAll("[data-sightings]").forEach((btn) => {
       btn.addEventListener("click", () => showSightings(btn.getAttribute("data-sightings")));
     });
+    document.querySelectorAll("[data-evidence-id]").forEach((btn) => {
+      btn.addEventListener("click", () => openEvidence(btn.getAttribute("data-evidence-id")));
+    });
 
     renderNavBadges();
     renderStats();
+    // Keep the map fresh if it's the active view (polling path stays live).
+    if (map && document.getElementById("view-map").classList.contains("active")) renderMap();
   }
 
   async function toggleDeviceLost(btn) {
@@ -333,6 +344,186 @@
     $("stat-devices").textContent = devices.length;
     $("stat-lost").textContent = devices.filter((d) => d.lost).length;
     $("stat-sightings").textContent = devices.reduce((n, d) => n + (d.sightingCount || 0), 0);
+  }
+
+  /* ================= map view ================= */
+
+  let map = null;
+  let markerLayer = null;
+  let tileErrors = 0;
+  const NIGERIA_CENTER = [9.08, 8.68];
+
+  function initMap() {
+    if (map) return;
+    map = L.map("map-canvas", { zoomControl: true }).setView(NIGERIA_CENTER, 6);
+    const tiles = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+    });
+    tiles.on("tileerror", () => {
+      tileErrors++;
+      if (tileErrors === 3) {
+        $("map-note").textContent =
+          "Map tiles need internet — showing positions on the grid instead. Markers are still accurate.";
+      }
+    });
+    tiles.addTo(map);
+    markerLayer = L.layerGroup().addTo(map);
+  }
+
+  function devicePinClass(d) {
+    if (d.lost) return "pin pin-lost";
+    return d.type === "phone" ? "pin pin-phone" : "pin pin-laptop";
+  }
+
+  function devicePopup(d, fix) {
+    const tag = d.lost ? '<span class="popup-tag lost">● LOST</span>' : '<span class="popup-tag safe">Safe</span>';
+    const time = fix.timestamp ? new Date(fix.timestamp).toLocaleString() : timeAgo(d.lastSeenAt);
+    const code = escapeHtml(deviceIdCode(d));
+    return `<div>
+      <p class="popup-title">${escapeHtml(deviceName(d))}</p>
+      <p class="popup-meta"><b>${d.type === "phone" ? "Phone" : "Laptop"}</b>${d.operator ? " · " + escapeHtml(d.operator) : ""}</p>
+      <p class="popup-meta">${Number(fix.lat).toFixed(5)}°, ${Number(fix.lng).toFixed(5)}° · ±${fix.accuracy || "?"} m</p>
+      <p class="popup-meta">${escapeHtml(fix.source)} · ${time}</p>
+      ${code ? `<p class="popup-meta">${code}</p>` : ""}
+      ${tag}
+    </div>`;
+  }
+
+  function sightingPopup(s) {
+    const t = s.receivedAt ? new Date(s.receivedAt).toLocaleString() : "?";
+    return `<div>
+      <p class="popup-title">Community sighting</p>
+      <p class="popup-meta">${Number(s.lat).toFixed(5)}°, ${Number(s.lng).toFixed(5)}°${s.accuracy ? ` · ±${s.accuracy} m` : ""}</p>
+      <p class="popup-meta">beacon ${escapeHtml(s.beacon || "")} · ${t}</p>
+      <span class="popup-tag sighting">● Seen by another TrackNaija device</span>
+    </div>`;
+  }
+
+  let mapRendering = false;
+
+  async function renderMap() {
+    if (!map || mapRendering) return;
+    mapRendering = true;
+    try {
+      await paintMap();
+    } finally {
+      mapRendering = false;
+    }
+  }
+
+  async function paintMap() {
+    markerLayer.clearLayers();
+    const points = [];
+    const addPoint = (ll) => points.push(ll);
+
+    // This machine's own last-known fix.
+    if (state.lastFix) {
+      const fix = state.lastFix;
+      const ll = [fix.lat, fix.lng];
+      addPoint(ll);
+      L.marker(ll, { icon: L.divIcon({ className: "pin pin-laptop", iconSize: [18, 18], iconAnchor: [9, 9] }) })
+        .bindPopup(
+          `<div><p class="popup-title">This machine</p><p class="popup-meta">${Number(fix.lat).toFixed(5)}°, ${Number(fix.lng).toFixed(5)}° · ${escapeHtml(fix.source)}</p></div>`,
+        )
+        .addTo(markerLayer);
+    }
+
+    // Device markers first, then fetch sightings for every device that has
+    // them in parallel (avoids serial N+1 round-trips).
+    for (const d of devices) {
+      const fix = d.lastFix;
+      if (fix && Number.isFinite(fix.lat) && Number.isFinite(fix.lng)) {
+        const ll = [fix.lat, fix.lng];
+        addPoint(ll);
+        L.marker(ll, { icon: L.divIcon({ className: devicePinClass(d), iconSize: [18, 18], iconAnchor: [9, 9] }) })
+          .bindPopup(devicePopup(d, fix))
+          .addTo(markerLayer);
+      }
+    }
+    const withSightings = devices.filter((d) => (d.sightingCount || 0) > 0);
+    const sightingLists = await Promise.all(
+      withSightings.map(async (d) => {
+        const res = await api.getSightings(d.deviceId);
+        return (res && res.sightings) || [];
+      }),
+    );
+    for (const list of sightingLists) {
+      for (const s of list) {
+        if (!Number.isFinite(Number(s.lat)) || !Number.isFinite(Number(s.lng))) continue;
+        const ll = [Number(s.lat), Number(s.lng)];
+        addPoint(ll);
+        L.marker(ll, { icon: L.divIcon({ className: "pin pin-sighting", iconSize: [12, 12], iconAnchor: [6, 6] }) })
+          .bindPopup(sightingPopup(s))
+          .addTo(markerLayer);
+      }
+    }
+
+    if (points.length > 0) {
+      // maxZoom keeps single-device / co-located markers from zooming to
+      // street level (degenerate bounds would otherwise fit at maxZoom 19).
+      map.fitBounds(L.latLngBounds(points).pad(0.15), { maxZoom: 16 });
+      $("map-note").textContent =
+        `${devices.length} device${devices.length === 1 ? "" : "s"} · ${points.length} location${points.length === 1 ? "" : "s"} plotted`;
+    } else {
+      map.setView(NIGERIA_CENTER, 6);
+      $("map-note").textContent =
+        "No positions yet — fixes and sightings appear here as devices report in. Map tiles need internet; markers are accurate either way.";
+    }
+    map.invalidateSize();
+  }
+
+  /* ================= evidence gallery ================= */
+
+  let evidenceReq = 0; // guards rapid clicks: only the latest request paints
+
+  async function openEvidence(deviceId) {
+    const dev = devices.find((d) => d.deviceId === deviceId);
+    $("evidence-modal-title").textContent = `Evidence — ${deviceName(dev || {})}`;
+    const grid = $("evidence-grid");
+    grid.innerHTML = '<p class="evidence-empty">Loading photos…</p>';
+    $("evidence-modal").classList.remove("hidden");
+
+    const token = ++evidenceReq;
+    const res = await api.getEvidence(deviceId);
+    if (token !== evidenceReq) return; // a newer request superseded this one
+    const list = (res && res.evidence) || [];
+    if (list.length === 0) {
+      grid.innerHTML =
+        '<p class="evidence-empty">No photos captured yet. Webcam evidence appears here when lost mode arms the camera.</p>';
+      return;
+    }
+    grid.innerHTML = list
+      .map((e) => {
+        const t = e.capturedAt || e.receivedAt;
+        const label = t ? new Date(t).toLocaleString() : "";
+        return `<div class="evidence-thumb" data-evidence-src="${escapeHtml(e.dataUrl)}" data-evidence-time="${escapeHtml(t || "")}" title="${escapeHtml(label)}">
+          <img src="${escapeHtml(e.dataUrl)}" alt="Evidence captured ${escapeHtml(label)}" />
+          <span class="thumb-time">${escapeHtml(label)}</span>
+        </div>`;
+      })
+      .join("");
+    grid.querySelectorAll("[data-evidence-src]").forEach((thumb) => {
+      thumb.addEventListener("click", () =>
+        openLightbox(thumb.getAttribute("data-evidence-src"), thumb.getAttribute("data-evidence-time")),
+      );
+    });
+  }
+
+  function closeEvidence() {
+    $("evidence-modal").classList.add("hidden");
+    $("evidence-grid").innerHTML = "";
+  }
+
+  function openLightbox(src, time) {
+    $("lightbox-img").src = src;
+    $("lightbox-caption").textContent = time ? `captured ${time}` : "";
+    $("lightbox").classList.remove("hidden");
+  }
+
+  function closeLightbox() {
+    $("lightbox").classList.add("hidden");
+    $("lightbox-img").src = "";
   }
 
   /* ================= find nearby (BLE) ================= */
@@ -556,6 +747,21 @@
     $("btn-lock").addEventListener("click", () => api.lockScreen());
 
     $("btn-refresh-devices").addEventListener("click", refreshDevices);
+    $("btn-map-refresh").addEventListener("click", () => {
+      refreshDevices().then(() => renderMap());
+    });
+    $("btn-map-fit").addEventListener("click", () => {
+      if (map) renderMap();
+    });
+    $("evidence-close").addEventListener("click", closeEvidence);
+    $("evidence-backdrop").addEventListener("click", closeEvidence);
+    $("lightbox-close").addEventListener("click", closeLightbox);
+    $("lightbox-backdrop").addEventListener("click", closeLightbox);
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      if (!$("lightbox").classList.contains("hidden")) closeLightbox();
+      else if (!$("evidence-modal").classList.contains("hidden")) closeEvidence();
+    });
     $("btn-scan").addEventListener("click", startScan);
     $("btn-clear-alerts").addEventListener("click", clearAllAlerts);
 

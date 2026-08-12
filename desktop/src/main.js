@@ -328,6 +328,15 @@ ipcMain.handle("agent:scan-nearby", async (_e, durationSec) => {
   return { ...result, reported, at: { lat: fix.lat, lng: fix.lng } };
 });
 
+/** Webcam evidence photos for a device (newest first). */
+ipcMain.handle("agent:get-evidence", async (_e, deviceId) => {
+  if (!sync || !sync.configured) return { ok: false, evidence: [] };
+  const res = await sync.getEvidence(deviceId);
+  // The server returns a bare array for evidence; tolerate both shapes.
+  const list = Array.isArray(res) ? res : (res && res.evidence) || [];
+  return { ok: Array.isArray(res) || !!res, evidence: list };
+});
+
 /** Full alert list for the dashboard feed (main.js pushes new ones live). */
 ipcMain.handle("agent:get-alerts", async () => {
   if (!sync || !sync.configured) return { ok: false, alerts: [] };

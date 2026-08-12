@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com"
+      content="default-src 'self'; img-src 'self' data: blob: https://*.tile.openstreetmap.org; media-src 'self' blob:; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com"
     />
     <title>TrackNaija — Tracking Dashboard</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -14,6 +14,7 @@
       href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600;700&family=Fira+Code:wght@400;600&display=swap"
       rel="stylesheet"
     />
+    <link rel="stylesheet" href="vendor/leaflet/leaflet.css" />
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
@@ -33,6 +34,9 @@
           <button class="nav-item" data-view="devices">
             <span class="nav-icon icon-devices" aria-hidden="true"></span>Devices
             <span id="devices-badge" class="nav-badge hidden"></span>
+          </button>
+          <button class="nav-item" data-view="map">
+            <span class="nav-icon icon-map" aria-hidden="true"></span>Map
           </button>
           <button class="nav-item" data-view="finder">
             <span class="nav-icon icon-finder" aria-hidden="true"></span>Find nearby
@@ -224,6 +228,26 @@
           </div>
         </section>
 
+        <!-- ============ View: Map ============ -->
+        <section class="view" id="view-map">
+          <div class="map-toolbar">
+            <div class="map-legend">
+              <span class="legend-item"><span class="legend-dot dot-phone"></span>Phone fix</span>
+              <span class="legend-item"><span class="legend-dot dot-laptop"></span>Laptop fix</span>
+              <span class="legend-item"><span class="legend-dot dot-lost"></span>Lost device</span>
+              <span class="legend-item"><span class="legend-dot dot-sighting"></span>Community sighting</span>
+            </div>
+            <div class="map-actions">
+              <button id="btn-map-fit" class="btn btn-ghost btn-sm">Fit all</button>
+              <button id="btn-map-refresh" class="btn btn-ghost btn-sm">Refresh</button>
+            </div>
+          </div>
+          <div id="map-canvas" class="map-canvas" aria-label="live tracking map"></div>
+          <p id="map-note" class="meta">
+            Loading device positions… (map tiles need internet; markers are accurate either way)
+          </p>
+        </section>
+
         <!-- ============ View: Find nearby ============ -->
         <section class="view" id="view-finder">
           <div class="card">
@@ -319,6 +343,28 @@
       <span id="last-update" class="mono">—</span>
     </footer>
 
+    <!-- Evidence gallery modal -->
+    <div id="evidence-modal" class="modal hidden" role="dialog" aria-modal="true" aria-label="Evidence photos">
+      <div class="modal-backdrop" id="evidence-backdrop"></div>
+      <div class="modal-card">
+        <div class="modal-head">
+          <h3 id="evidence-modal-title">Evidence</h3>
+          <button id="evidence-close" class="modal-close" aria-label="Close gallery">✕</button>
+        </div>
+        <div id="evidence-grid" class="evidence-grid"></div>
+        <p id="evidence-note" class="meta">Webcam captures from this device, newest first.</p>
+      </div>
+    </div>
+
+    <!-- Lightbox for a single photo -->
+    <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true">
+      <div class="lightbox-backdrop" id="lightbox-backdrop"></div>
+      <img id="lightbox-img" class="lightbox-img" alt="Evidence photo" />
+      <p id="lightbox-caption" class="lightbox-caption mono"></p>
+      <button id="lightbox-close" class="modal-close lightbox-close" aria-label="Close photo">✕</button>
+    </div>
+
+    <script src="vendor/leaflet/leaflet.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

@@ -98,6 +98,11 @@ class SyncClient {
     return this._req("GET", `/api/devices/${deviceId}/sightings`);
   }
 
+  /** Captured webcam evidence for a device (newest first). */
+  async getEvidence(deviceId) {
+    return this._req("GET", `/api/devices/${deviceId}/evidence`);
+  }
+
   /** All paired devices (phones + laptops) for the owner dashboard. */
   async listDevices() {
     return this._req("GET", "/api/devices");

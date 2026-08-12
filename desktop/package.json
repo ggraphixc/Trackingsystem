@@ -19,9 +19,29 @@
   "build": {
     "appId": "com.tracknaija.agent",
     "productName": "TrackNaija Agent",
-    "files": ["src/**/*", "assets/**/*"],
-    "win": { "target": ["nsis"] },
-    "mac": { "target": ["dmg"], "category": "public.app-category.utilities" },
-    "linux": { "target": ["AppImage"], "category": "Utility" }
+    "files": [
+      "src/**/*",
+      "assets/**/*"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ]
+    },
+    "mac": {
+      "target": [
+        "dmg"
+      ],
+      "category": "public.app-category.utilities"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Utility"
+    }
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4"
   }
 }
