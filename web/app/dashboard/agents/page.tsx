@@ -77,7 +77,7 @@ export default function AgentsPage() {
   const [smsPhone, setSmsPhone] = useState("");
   const [smsBusy, setSmsBusy] = useState(false);
   const [smsNote, setSmsNote] = useState("");
-  const [ownerKey, setOwnerKeyInput] = useState(getOwnerKey());
+  const [ownerKey, setOwnerKeyInput] = useState("");
   const [ownerKeyBusy, setOwnerKeyBusy] = useState(false);
   const [ownerKeyNote, setOwnerKeyNote] = useState("");
   const [user, setUser] = useState<SessionUser | null>(null);
@@ -202,6 +202,13 @@ export default function AgentsPage() {
     const t = setInterval(load, 8000); // live-ish refresh
     return () => clearInterval(t);
   }, [load]);
+
+  // Hydration-safe owner key: reading localStorage in the initializer would
+  // render "no key set" on the server but "key set" on the client's first
+  // paint (hydration mismatch #418). Load it after mount instead.
+  useEffect(() => {
+    setOwnerKeyInput(getOwnerKey());
+  }, []);
 
   async function makeCode() {
     setBusy(true);

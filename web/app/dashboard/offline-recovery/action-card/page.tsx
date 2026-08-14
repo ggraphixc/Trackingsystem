@@ -123,7 +123,7 @@ export default function RecoveryActionCard() {
           <p className="text-lg font-bold tracking-wide text-ink">
             DRAVEX · RECOVERY ACTION CARD
           </p>
-          <p className="text-xs font-semibold text-ink-muted">
+          <p className="text-xs font-semibold text-ink-muted" suppressHydrationWarning>
             {new Date().toLocaleDateString("en-NG", {
               day: "2-digit",
               month: "short",
