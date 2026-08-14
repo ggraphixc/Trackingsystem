@@ -563,13 +563,52 @@ same thin shape (anti-probe).
 
 ---
 
-## 19. Dravex Tag (hardware prototype)
+## 19. Dravex Tag V2 (production recovery beacon)
 
 `tag-firmware/` — Zephyr firmware for nRF52840 recovery beacons (bags, bikes,
 items that can't run an app): broadcasts the identical Dravex beacon format
 (`0000fffa` + `[0x01]` + 12-hex), silent until armed (long-press button), NVS
-identity that survives battery swaps. Server resolves static tag beacons via
-`staticBeacon`. Prototype only: no RTC rotation yet, armed battery is days.
+identity that survives battery swaps and reboots.
+
+**V2 identity & rotation (privacy-first):** the tag stores a permanent
+internal 16-byte secret in NVS (`tag_secret`); it is **never** transmitted.
+What is broadcast is a **rotating beacon id**: `beaconId = sha256(secret +
+"dravex|tag|day")[0..12]` where `day = floor(unixDays/1)` — a deterministic,
+server-resolvable id that changes at each UTC day boundary. The server
+resolves a sighting against the current day's id **and** the previous day's
+(grace window), so a sighting just after midnight still matches; older ids
+expire naturally and cannot be replayed as the tag's identity. Rotation is
+handled in `tag-firmware/src/tag_rotation.c` (pure C, host-tested in
+`server/e2e-tag.js`), with a fail-closed RTC fallback: if the RTC cannot
+produce a trustworthy time, the tag uses `TAG_RTC_FALLBACK_DAY` (the boot
+day) — it never invents an unbounded time and never broadcasts the permanent
+secret.
+
+**V2 duty cycle (low power):** `SLEEP → WAKE → ADVERTISE → SLEEP`. While
+armed, the tag advertises for `TAG_ADV_DURATION_MS` (default 2000 ms) then
+sleeps `TAG_SLEEP_DURATION_MS` (default 15000 ms), repeating; advertising
+interval `TAG_ADV_INTERVAL_MS` (default 100 ms) and TX power
+`TAG_TX_POWER_DBM` (default 0) are centralized in `tag_config.h`. Battery
+life figures are **estimates only** until hardware testing.
+
+**V2 battery telemetry:** `tag_batt.c` samples the ADC voltage divider on
+the `vbatt` devicetree alias when present and reports an estimated
+percentage + low-battery state; if the board lacks the alias the build
+honestly reports `TAG_BATT_UNMEASURED` rather than fabricating values.
+
+**V2 arm/disarm & status:** default state is **DISARMED / QUIET** (no
+advertising — no permanent BLE tracking identifier exists). Short press =
+status pulse; long press (1.5 s) = arm (recovery beacon advertising, status
+LED double-blink); long press while armed = disarm. LED pulses are short
+(≤150 ms) to preserve battery. A test mode (`CONFIG_DRAVEX_TAG_TEST_MODE`,
+off by default) exposes rotation/battery/duty-cycle knobs over a secure dev
+interface only — the permanent secret is never emitted in normal BLE
+packets.
+
+**Server resolution:** `server/beacon.js` resolves rotating tag ids
+(current + previous day) and still accepts legacy `staticBeacon` matches;
+sightings remain fully anonymous (no owner, no permanent id, no scanner
+identity). See `docs/DRAVEX_TAG_V2.md` for the full hardware build doc.
 
 ---
 

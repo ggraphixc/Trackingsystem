@@ -1,0 +1,67 @@
+# Dravex Tag V2 — production-oriented configuration.
+# Production mode is the default: test mode (CONFIG_DRAVEX_TAG_TEST_MODE)
+# is off and can only be enabled deliberately for bench work.
+
+menu "Dravex Tag"
+
+config DRAVEX_TAG_ADV_BURST_MS
+	int "Advertising burst duration (ms) per duty cycle"
+	default 0
+	help
+	  How long the radio advertises per cycle while armed. 0 = use the
+	  built-in default in tag_config.h (250 ms). Centralized here and in
+	  tag_config.h so power tuning is one place.
+
+config DRAVEX_TAG_SLEEP_MS
+	int "Deep-sleep duration (ms) between advertising bursts"
+	default 0
+	help
+	  0 = use the built-in default in tag_config.h (5000 ms). While
+	  disarmed the tag sleeps indefinitely (wake on button), so this only
+	  matters in the armed duty cycle.
+
+config DRAVEX_TAG_ADV_INT_MIN_MS
+	int "Advertising interval minimum (ms)"
+	default 0
+	help
+	  Lower bound of the advertising interval range in milliseconds
+	  (0 = tag_config.h default 100 ms).
+
+config DRAVEX_TAG_ADV_INT_MAX_MS
+	int "Advertising interval maximum (ms)"
+	default 0
+	help
+	  Upper bound of the advertising interval range in milliseconds
+	  (0 = tag_config.h default 150 ms).
+
+config DRAVEX_TAG_TEST_MODE
+	bool "Hardware test mode (bench only — never for production)"
+	default n
+	help
+	  Enables bench features: identity/battery logging over the debug
+	  UART, an immediate beacon rotation, and timing overrides. It NEVER
+	  changes what is broadcast beyond the still-day-derived beacon, and
+	  it NEVER exposes the permanent secret over BLE. Production builds
+	  must leave this off.
+
+config DRAVEX_TAG_TEST_DAY_OFFSET
+	int "Test mode: day offset applied to the rotation bucket"
+	default 1
+	depends on DRAVEX_TAG_TEST_MODE
+	help
+	  Forces the beacon to a different rotation bucket immediately so the
+	  bench can watch it change. The result intentionally does not
+	  resolve on the live server (it is a future day) — it proves the
+	  rotation mechanics.
+
+config DRAVEX_TAG_TEST_BURST_MS
+	int "Test mode: advertising burst override (ms, 0 = production value)"
+	default 0
+	depends on DRAVEX_TAG_TEST_MODE
+
+config DRAVEX_TAG_TEST_SLEEP_MS
+	int "Test mode: deep-sleep override (ms, 0 = production value)"
+	default 0
+	depends on DRAVEX_TAG_TEST_MODE
+
+endmenu

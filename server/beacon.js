@@ -35,6 +35,23 @@ function beaconFor(deviceId, now = Date.now()) {
 }
 
 /**
+ * Tag V2: the day-rotated beacon a Dravex Tag broadcasts, derived from its
+ * PERMANENT secret (the `staticBeacon` field) instead of the deviceId. The
+ * secret itself is never transmitted — the firmware (tag-firmware/src/
+ * tag_rotation.c) mirrors this exact derivation, and server/e2e-tag.js
+ * cross-checks the two never drift apart.
+ *
+ *   beacon = hex(sha256(staticBeacon + "|" + dayBucket))[0..12]
+ */
+function tagBeaconFor(staticBeacon, now = Date.now()) {
+  return crypto
+    .createHash("sha256")
+    .update(`${String(staticBeacon).toLowerCase()}|${dayBucket(now)}`)
+    .digest("hex")
+    .slice(0, BEACON_LEN);
+}
+
+/**
  * Reverse-lookup: given a heard beacon, find the device broadcasting it.
  * Checks today and yesterday (a scanner may report a sighting that crossed
  * midnight). Returns the device record or null — callers must NEVER reveal
@@ -43,19 +60,33 @@ function beaconFor(deviceId, now = Date.now()) {
 function resolveBeacon(store, beacon, now = Date.now()) {
   const norm = String(beacon || "").toLowerCase().trim();
   if (!norm) return null;
-  // Dravex Tag hardware: a static 12-hex id claimed at pairing (staticBeacon)
-  // resolves directly — no day rotation, matching the tag's NVS-persisted id.
+  const buckets = [dayBucket(now), dayBucket(now) - 1];
   for (const id of Object.keys(store.devices)) {
     const d = store.devices[id];
-    if (d.staticBeacon && d.staticBeacon === norm) return d;
+    if (!d) continue;
+    // Dravex Tag V1 (legacy): a static 12-hex id claimed at pairing
+    // (staticBeacon) resolves directly. Kept for backwards compatibility;
+    // V2 tags never broadcast their permanent secret, so this path only
+    // matches hardware still running the prototype firmware.
+    if (d.staticBeacon && String(d.staticBeacon).toLowerCase() === norm) {
+      return d;
+    }
   }
-  const buckets = [dayBucket(now), dayBucket(now) - 1];
   for (const bucket of buckets) {
     for (const id of Object.keys(store.devices)) {
-      if (beaconFor(id, bucket * DAY_MS) === norm) return store.devices[id];
+      const d = store.devices[id];
+      if (!d) continue;
+      // Tag V2: day-rotated beacon derived from the permanent secret.
+      if (d.staticBeacon && tagBeaconFor(d.staticBeacon, bucket * DAY_MS) === norm) {
+        return d;
+      }
+      // Phones/laptops: day-rotated beacon derived from the deviceId.
+      if (beaconFor(id, bucket * DAY_MS) === norm) {
+        return d;
+      }
     }
   }
   return null;
 }
 
-module.exports = { beaconFor, resolveBeacon, dayBucket };
+module.exports = { beaconFor, tagBeaconFor, resolveBeacon, dayBucket };
