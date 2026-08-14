@@ -580,3 +580,70 @@ identity that survives battery swaps. Server resolves static tag beacons via
 5. **iOS is a companion, not a tracker** — we steer to Apple Find My.
 6. **Android 10+ apps cannot read the device's own IMEI** — the Device Check is
    user-entered; we won't claim automatic post-flash self-identification.
+
+---
+
+## 24. Phase 3.5 — Ecosystem readiness (design only, no code)
+
+> **Status: architecture only.** Nothing in this section is implemented or
+> scheduled for implementation yet. It defines how future ecosystem partners
+> connect to the existing Dravex core so the next milestone can be scoped
+> without redesigning anything.
+
+### 24.1 How partners plug into the existing lifecycle
+
+Every Phase 3.5 capability is a *consumer of the same chain* that already
+works end-to-end today:
+
+```
+Device identity → recovery → verification → transfer → verified listing → interest
+```
+
+- **Identity** (§5) is the anchor: every device has one stable Dravex identity
+  regardless of owner, SIM, or OS reinstall.
+- **Recovery** (§8, §18b) produces the evidence pack and recovery case.
+- **Verification** (owner confirms return; transfer clears the registry).
+- **Verified listing** (N5) is the only resale entry point — registry-clean,
+  owner data purged, buyer interest relayed privately.
+
+Partners never get a parallel data model. They get read/action scopes over
+this chain, gated by the existing auth (owner account / device token / owner
+key) and admin controls.
+
+### 24.2 Planned ecosystem capabilities
+
+| Capability | Connects to | Design intent | Status |
+|---|---|---|---|
+| Repair / refurbishment network | Recovery case + evidence pack + verified listing | A device that cannot be recovered to the owner can still be refurbished and re-listed with the full provenance trail intact | Not built |
+| Trusted repairers | Device Check + recovery case | Repairers who accept Dravex workflows get a reputation signal; a device in for repair is never mistaken for a stolen one | Not built |
+| Verified finders | Community sightings (§10) + finder contact (§18b) | Repeat finders who return devices accumulate verifiable-but-anonymous standing — never personal identity | Not built |
+| Recovery partners | Recovery case + alerts | Organizations (cyber cafés, phone stalls, transport hubs) surface sightings through the existing anonymous beacon/sighting channel | Not built |
+| Corporate device recovery | Owner account → fleet of devices | The per-owner account model (§13) already scopes one account to many devices; fleet-level views reuse the recovery case per device | Not built |
+| Insurance integration | Device Check verdict + recovery case + evidence pack | Insurers consume the same honest signals (registry status, case outcome, evidence) — no new tracking claims | Not built |
+| Paystack integration | Verified listing → interest | Payment is *outside* the Dravex loop: buyer and seller settle directly; Dravex's verified-listing record is the trust layer that makes the transaction safe | Not built |
+| Flutterwave integration | Verified listing → interest | Same as Paystack — an alternative settlement rail; Dravex never holds funds | Not built |
+
+### 24.3 Explicit non-goals (Phase 3.5 and beyond)
+
+Dravex remains a **Device Recovery Network** — not an e-commerce platform:
+
+- **No checkout, cart, or order management.** Interest is the endpoint of the
+  Dravex loop; settlement happens between buyer and seller.
+- **No wallet, escrow, commissions, or marketplace fees.**
+- **No shipping/logistics integration.**
+- **No seller marketplace profiles or buyer accounts.**
+- **No payment credentials in Dravex storage** — if a payment provider is ever
+  used, it is client-side SDK + provider-hosted tokenization only.
+
+### 24.4 Integration principles (when Phase 3.5 is scoped)
+
+1. Every new capability must be expressible as an API scope over the existing
+   chain in §24.1 — no new backend, no new data model, no new lifecycle.
+2. Partner capabilities must preserve the honesty contract (§23): a
+   repairer/insurer integration must never imply powered-off or post-wipe
+   tracking.
+3. Privacy holds: partners see what the owner authorizes, never owner or
+   finder identity, never exact recovery locations beyond the existing
+   accuracy model.
+4. Payments, when they arrive, are strictly out-of-band settlement — Dravex
+   records the verified handoff, not the money.

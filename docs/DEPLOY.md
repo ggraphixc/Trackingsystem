@@ -132,6 +132,23 @@ Then, in the dashboard **Agents page → SMS fallback alerts**, enter the owner'
 (`+234...`) and hit *Save & enable* + *Send test SMS*. The server texts that number on
 every reconnect and SIM change.
 
+### Production requirements (exact)
+
+| Requirement | Value |
+|---|---|
+| Provider env (Render service) | `TERMII_API_KEY` + `TERMII_FROM` (approved **DND sender ID**), **or** `TWILIO_ACCOUNT_SID` + `TWILIO_AUTH_TOKEN` + `TWILIO_PHONE_NUMBER` — never both |
+| Owner phone | `+234...` (E.164, stored masked; set via dashboard Agents page → SMS fallback alerts) |
+| Default without credentials | **log mode** — alerts flow to push + webhook; the SMS leg prints to the server console |
+| Rate limits (built-in, do not disable) | 1 SMS / 60 s per owner · 10 / rolling hour · sighting alerts never send SMS (`opts.sms: false`) |
+| Failure handling | every attempt is recorded in the Service-health **delivery log** (`POST /api/admin/retry-delivery { id }` re-fires a failed SMS/webhook, subject to the same 1/min throttle) |
+
+**Live verification checklist (P2):** run `node server/e2e-sms.js` locally (proves log
+mode, failure recording, retry re-fire and throttling without credentials), then on the
+live service: trigger a real SIM-change → SMS lands on the Nigerian number → force the
+provider key to fail → confirm the failure appears in Service health → retry → confirm
+delivery. Credentials must live only in Render env vars — never in code, logs or the
+frontend (the dashboard reads only the masked number + provider name).
+
 ## 5. Point the agents at the live server
 
 - **Desktop agent (Windows/macOS/Linux):** open the agent → *Link to dashboard* → enter

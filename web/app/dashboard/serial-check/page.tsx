@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 import { checkStolenRegistry } from "@/lib/api";
 import type { RegistryVerdict } from "@/lib/api";
@@ -189,7 +190,10 @@ export default function SerialCheckPage() {
 
               {/* N5: verified resale listing — the legitimate second-life market */}
               {verdict.resaleReady && verdict.listing ? (
-                <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50/70 p-4">
+                <Link
+                  href="/marketplace"
+                  className="mt-4 block rounded-xl border border-emerald-200 bg-emerald-50/70 p-4 transition-colors duration-200 hover:bg-emerald-50"
+                >
                   <p className="flex items-center gap-2 text-sm font-semibold text-emerald-800">
                     <ShieldCheckIcon className="h-4 w-4" />
                     Verified resale-ready
@@ -200,7 +204,8 @@ export default function SerialCheckPage() {
                     <strong>₦{verdict.listing.price.toLocaleString("en-NG")}</strong>{" "}
                     (condition: {verdict.listing.condition}). Legitimate sellers have nothing to hide.
                   </p>
-                </div>
+                  <p className="mt-2 text-xs font-semibold text-primary">View it in the marketplace →</p>
+                </Link>
               ) : null}
             </div>
           </div>

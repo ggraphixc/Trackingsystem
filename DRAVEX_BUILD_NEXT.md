@@ -1,14 +1,12 @@
 # Dravex — Build-Next Audit & Implementation Prompt
 
-> **Revision 3 (2026-08-14).** Revision 2 audited the repository after M0–M8 +
-> Phase 2.5 and produced the **N0–N5** milestone (live SMS, real-device
-> validation, iOS, retention, ops alerting, Phase-3 first slice). **N0–N5 are
-> now built, validated, and deployed to production** (commit `d3ad5e0`), plus a
-> post-milestone hardening batch (`d1be0a9` claim-token fix, `b2f4168` Android
-> CI + forget-device action, `a46242c` hydration fix). This revision re-audits
-> the code, marks every milestone item with its live status, and replaces §14
-> with the next implementation prompt (Phase-3 slice completion + production
-> hardening).
+> **Revision 4 (2026-08-14).** Revision 3 shipped the Phase-3 Recovery
+> Intelligence milestone (`7945845`). This revision records the **Phase-3 slice
+> completion + production hardening** milestone: the marketplace page closes the
+> last N5 gap (no more dead `listListings()`), the physical-device campaign is
+> prepared (BLOCKED on hardware), the SMS pipeline gained a hermetic
+> verification suite, the iOS build steps are documented, and Phase 3.5 is
+> written up as design-only (§24 of NEXTGENE). See §14 for the follow-up.
 >
 > The rule that governs all further work:
 >
@@ -100,7 +98,7 @@ Milestone additions, each verified in code or live:
 
 | # | Gap | Disposition | Remaining work |
 |---|---|---|---|
-| 1 | 🔴 **Public verified-listings browse UI** | 🟡 API + owner UI + Device Check badge done (N5); **the buyer-facing browse/interest page is missing** — `listListings()` and the `/interest` client exist in `web/lib/api.ts` but no page consumes them (dead code) | Build the marketplace page: browse verified listings (generic labels), express interest → owner alert (P0 of §14) |
+| 1 | ✅ **Public verified-listings browse UI** | **Built** — `/marketplace` (public, buyer-facing) consumes `getListings()`; generic labels only (no owner identity, no `deviceId` shown); interest form per card → `POST /api/listings/:id/interest` → private owner alert; loading/empty/error/rate-limited states; nav + Device Check badge link added | Done (`7945845` follow-up) |
 | 2 | 🟡 SMS provider live | ✅ Code + wiring done (N0) | 🔜 **Credentials** — `TERMII_API_KEY` + **approved** `TERMII_FROM` (DND sender ID) on Render, then real-number verification |
 | 3 | 🟡 Real-device validation | ✅ Harness + live replay done (N1) | 🔜 On-device runs: Tecno/Infinix/Samsung + Windows/macOS/Linux on MTN/Airtel/Glo/9mobile (`DRAVEX_TEST_MATRIX.md` rows P1–P12) |
 | 4 | 🟡 iOS build | ✅ Code branded + live URL (N2) | 🔜 Xcode build on macOS; Find My handoff + reporting flow |
