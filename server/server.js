@@ -70,7 +70,13 @@ try {
 const PORT = process.env.PORT || 4173;
 // Location + evidence data must not be exposed to the LAN by default.
 const HOST = process.env.HOST || "127.0.0.1";
-const FIX_HISTORY_LIMIT = 100;
+// History retention bounds (per device). Raised from the old 100-fix cap so
+// pagination has real depth; still bounded so the JSON file / JSONB blob
+// cannot grow without limit. The API pages through these arrays with a
+// stable timestamp+id cursor (see paginateFeed) in BOTH storage modes.
+const FIX_HISTORY_LIMIT = 2000;
+const EVENT_HISTORY_LIMIT = 2000;
+const SIGHTING_HISTORY_LIMIT = 500;
 const MAX_BODY_BYTES = 5 * 1024 * 1024; // evidence photos are data: URLs — cap uploads
 // A fix after this many hours of silence raises a "reconnected" alert. The
 // theft lab overrides it to simulate a stolen phone surfacing online.
@@ -232,7 +238,7 @@ function storeFix(dev, fix) {
       raiseAlert("reconnected", dev, `${dev.hostname || "A device"} came back online after ${Math.round(gapHours)}h offline.`);
     }
   }
-  dev.lastFix = { ...fix, receivedAt: now };
+  dev.lastFix = { id: fix.id || randomUUID(), ...fix, receivedAt: now };
   dev.fixes.push(dev.lastFix);
   if (dev.fixes.length > FIX_HISTORY_LIMIT) dev.fixes = dev.fixes.slice(-FIX_HISTORY_LIMIT);
   dev.lastSeenAt = now;
@@ -258,7 +264,8 @@ function storeFix(dev, fix) {
 /** Record a device event (sim_change, etc.) and refresh lastSeenAt. */
 function storeEvent(dev, event) {
   dev.events = dev.events || [];
-  dev.events.push({ ...event, at: event.at || new Date().toISOString() });
+  dev.events.push({ id: event.id || randomUUID(), ...event, at: event.at || new Date().toISOString() });
+  if (dev.events.length > EVENT_HISTORY_LIMIT) dev.events = dev.events.slice(-EVENT_HISTORY_LIMIT);
   dev.lastSeenAt = new Date().toISOString();
   if (event.type === "sim_change") {
     const to = event.detail && event.detail.to;
@@ -332,8 +339,8 @@ const SIGHTING_ALERT_MIN_MS = 30 * 60_000;
 function storeSighting(dev, sighting) {
   if (!dev.lost) return; // never store sightings for non-lost devices
   dev.sightings = dev.sightings || [];
-  dev.sightings.push({ ...sighting, receivedAt: new Date().toISOString() });
-  if (dev.sightings.length > 50) dev.sightings = dev.sightings.slice(-50);
+  dev.sightings.push({ id: sighting.id || randomUUID(), ...sighting, receivedAt: new Date().toISOString() });
+  if (dev.sightings.length > SIGHTING_HISTORY_LIMIT) dev.sightings = dev.sightings.slice(-SIGHTING_HISTORY_LIMIT);
   saveStore();
   const now = Date.now();
   if (dev.lastSightingAlertAt && now - new Date(dev.lastSightingAlertAt).getTime() < SIGHTING_ALERT_MIN_MS) {
@@ -927,6 +934,109 @@ const contactLimiter = makeLimiter(5);
 const geoLimiter = makeLimiter(20); // /api/geolocate hits a PAID provider
 const authLimiter = makeLimiter(10); // register/login — public, brute-force + storage-DoS guard
 const adminLimiter = makeLimiter(10); // admin retry-delivery — fires webhooks/SMS
+
+/* ---------------- cursor pagination (Scale Core) ---------------- */
+
+const PAGE_DEFAULT_LIMIT = 50;
+const PAGE_MAX_LIMIT = 100;
+const FIX_SOURCES = new Set(["gps", "wifi_resolved", "wifi", "ip", "ble", "last_known"]);
+
+/**
+ * Stable compound cursor: base64url("<at>::<id>"). `at` is an ISO timestamp,
+ * `id` the item's stable unique id. Newest-first pages sort by (at DESC,
+ * id DESC); the cursor marks the last item of the previous page, so the next
+ * page is everything strictly after it. New data arriving between pages sorts
+ * before the cursor and cannot shift it (append-only feeds).
+ */
+function encodeCursor(at, id) {
+  return Buffer.from(`${at}::${id || ""}`).toString("base64url");
+}
+
+function decodeCursor(raw) {
+  if (!raw) return null;
+  let s;
+  try {
+    s = Buffer.from(raw, "base64url").toString("utf8");
+  } catch (_) {
+    return null;
+  }
+  const i = s.lastIndexOf("::");
+  if (i <= 0) return null;
+  const at = s.slice(0, i);
+  const id = s.slice(i + 2);
+  if (!at || Number.isNaN(Date.parse(at))) return null;
+  if (id && !/^[A-Za-z0-9-]{8,64}$/.test(id)) return null;
+  return { at, id };
+}
+
+/**
+ * Page a history feed with a stable compound cursor. Returns the paginated
+ * envelope, or { error: <httpStatus>, msg } for invalid input. The same code
+ * path serves JSON-file and Neon modes — the store is the single source of
+ * truth and both expose the identical API contract.
+ *
+ * Filters (P6): dateFrom / dateTo (ISO timestamps) and source (fixes only).
+ * A source filter on a feed that has no source field is rejected, not
+ * silently ignored — documented rather than faked.
+ */
+function paginateFeed(items, query, { getAt, getId, getSource }) {
+  const limitRaw = query.get("limit");
+  let limit = PAGE_DEFAULT_LIMIT;
+  if (limitRaw != null && limitRaw !== "") {
+    if (!/^\d+$/.test(limitRaw)) return { error: 400, msg: "Invalid limit — must be a positive integer." };
+    limit = Math.min(Number(limitRaw), PAGE_MAX_LIMIT); // excessive limit clamped
+    if (limit < 1) return { error: 400, msg: "Invalid limit." };
+  }
+
+  const dateFrom = query.get("dateFrom");
+  const dateTo = query.get("dateTo");
+  const source = query.get("source");
+  if (dateFrom && Number.isNaN(Date.parse(dateFrom))) return { error: 400, msg: "Invalid dateFrom — use an ISO timestamp." };
+  if (dateTo && Number.isNaN(Date.parse(dateTo))) return { error: 400, msg: "Invalid dateTo — use an ISO timestamp." };
+  if (dateFrom && dateTo && new Date(dateFrom).getTime() > new Date(dateTo).getTime()) {
+    return { error: 400, msg: "dateFrom must not be after dateTo." };
+  }
+  if (source && !FIX_SOURCES.has(source)) return { error: 400, msg: `Invalid source — one of ${[...FIX_SOURCES].join(", ")}.` };
+
+  const cursorRaw = query.get("cursor") || "";
+  if (cursorRaw && !decodeCursor(cursorRaw)) return { error: 400, msg: "Invalid cursor." };
+  const cursor = cursorRaw ? decodeCursor(cursorRaw) : null;
+
+  let rows = (items || [])
+    .filter(Boolean)
+    .map((it) => {
+      const at = getAt(it) || "";
+      const id = getId(it) || "";
+      return { it, at, id, src: getSource ? getSource(it) : null };
+    });
+
+  if (dateFrom) rows = rows.filter((r) => r.at && r.at >= dateFrom);
+  if (dateTo) rows = rows.filter((r) => r.at && r.at <= dateTo);
+  if (source) {
+    if (getSource === null) return { error: 400, msg: "The source filter is not supported on this feed." };
+    rows = rows.filter((r) => r.src === source);
+  }
+
+  // Newest first. ISO timestamps sort lexicographically; id breaks ties so
+  // equal timestamps never produce an unstable page boundary.
+  rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : a.id < b.id ? 1 : a.id > b.id ? -1 : 0));
+
+  if (cursor) {
+    const start = rows.findIndex((r) => r.at === cursor.at && r.id === cursor.id);
+    if (start === -1) return { error: 404, msg: "Cursor no longer valid — history was purged. Start from the first page." };
+    rows = rows.slice(start + 1);
+  }
+
+  const page = rows.slice(0, limit);
+  const hasMore = rows.length > limit;
+  const last = page[page.length - 1];
+  return {
+    items: page.map((r) => r.it),
+    limit,
+    hasMore,
+    nextCursor: hasMore && last ? encodeCursor(last.at, last.id) : null,
+  };
+}
 
 /* ---------------- routes ---------------- */
 
@@ -1778,8 +1888,14 @@ async function route(req, res) {
   // /api/devices/:id/... (devices are only created by pair/register and claim)
   if (parts[0] === "api" && parts[1] === "devices" && parts[2]) {
     const dev = store.devices[parts[2]];
-    if (!dev) return json(res, 404, { error: "Device not found." });
     const action = parts[3];
+    if (!dev) {
+      // Auth first, then 404: an unauthenticated probe must not learn whether
+      // a deviceId exists (P7 — no existence leak). With a valid owner
+      // credential a missing device is a plain 404.
+      if (!ownerOk(req)) return json(res, 401, { error: "Owner key or account session required." });
+      return json(res, 404, { error: "Device not found." });
+    }
 
     if (action === "fixes") {
       if (isPost) {
@@ -1792,8 +1908,14 @@ async function route(req, res) {
         return json(res, 201, { ok: true });
       }
       if (!ownerOrDeviceOk(req, dev)) return json(res, 401, { error: "Owner key or device token required." });
-      const limit = Math.min(100, parseInt(url.searchParams.get("limit") || "10", 10));
-      return json(res, 200, dev.fixes.slice(-limit).reverse());
+      // Scale Core: cursor-paginated, newest-first (default 50, max 100).
+      const fixesPage = paginateFeed(dev.fixes, url.searchParams, {
+        getAt: (f) => f.timestamp || f.receivedAt || "",
+        getId: (f) => f.id || "",
+        getSource: (f) => f.source || null,
+      });
+      if (fixesPage.error) return json(res, fixesPage.error, { error: fixesPage.msg });
+      return json(res, 200, fixesPage);
     }
 
     // POST /api/devices/:id/batch { items: [{type, fix|dataUrl|event}] } —
@@ -1849,7 +1971,13 @@ async function route(req, res) {
         return json(res, 201, { ok: true });
       }
       if (!ownerOrDeviceOk(req, dev)) return json(res, 401, { error: "Owner key or device token required." });
-      return json(res, 200, [...(dev.events || [])].reverse());
+      const eventsPage = paginateFeed(dev.events, url.searchParams, {
+        getAt: (e) => e.at || "",
+        getId: (e) => e.id || "",
+        getSource: null, // lifecycle events have no location source
+      });
+      if (eventsPage.error) return json(res, eventsPage.error, { error: eventsPage.msg });
+      return json(res, 200, eventsPage);
     }
 
     // POST /api/devices/:id/lost { lost: bool } — owner marks the device lost.
@@ -1870,6 +1998,7 @@ async function route(req, res) {
         }
         if (!dev.recoveryCode) dev.recoveryCode = String(Math.floor(100000 + Math.random() * 900000));
         dev.events.push({
+          id: randomUUID(),
           type: "lost",
           at: new Date().toISOString(),
           detail: { recoveryCode: !!dev.recoveryCode },
@@ -1881,7 +2010,7 @@ async function route(req, res) {
         );
       } else {
         dev.recoveryCode = null;
-        dev.events.push({ type: "found", at: new Date().toISOString() });
+        dev.events.push({ id: randomUUID(), type: "found", at: new Date().toISOString() });
         raiseAlert("found", dev, `${dev.hostname || "A device"} was marked found.`);
       }
       if (!dev.commands.some((c) => c.type === (dev.lost ? "lost" : "found") && !c.executedAt)) {
@@ -1927,7 +2056,7 @@ async function route(req, res) {
       dev.lastSightingSignatures = [];
       dev.contactMessages = [];
       dev.recoveryMessage = null;
-      dev.events = [{ type: "transfer", at: dev.transferredAt }];
+      dev.events = [{ id: randomUUID(), type: "transfer", at: dev.transferredAt }];
       dev.lastSeenAt = null;
       dev.reconnectedAt = null;
       // Registry: this physical device reads clean for its next owner.
@@ -1956,7 +2085,7 @@ async function route(req, res) {
       dev.lost = false;
       dev.recoveryCode = null;
       dev.verifiedAt = new Date().toISOString();
-      dev.events.push({ type: "recovered", at: dev.verifiedAt });
+      dev.events.push({ id: randomUUID(), type: "recovered", at: dev.verifiedAt });
       dev.commands = (dev.commands || []).filter((c) => c.executedAt); // disarm
       syncRegistry(dev);
       raiseAlert("recovered", dev, `${dev.hostname || "A device"} was verified recovered by its owner.`);
@@ -2029,9 +2158,17 @@ async function route(req, res) {
     }
 
     // GET /api/devices/:id/sightings — community BLE sightings, newest first.
+    // Paginated like fixes/events; sightings carry no location source, so the
+    // source filter is rejected with a clear message (never silently ignored).
     if (action === "sightings" && !isPost) {
       if (!ownerOrDeviceOk(req, dev)) return json(res, 401, { error: "Owner key or device token required." });
-      return json(res, 200, [...(dev.sightings || [])].reverse());
+      const sightingPage = paginateFeed(dev.sightings, url.searchParams, {
+        getAt: (s) => s.at || s.receivedAt || "",
+        getId: (s) => s.id || "",
+        getSource: null,
+      });
+      if (sightingPage.error) return json(res, sightingPage.error, { error: sightingPage.msg });
+      return json(res, 200, sightingPage);
     }
 
     if (action === "evidence") {

@@ -139,6 +139,10 @@ function createPgStorage(url) {
       await pool.query("SELECT ST_SetSRID(ST_MakePoint(0, 0), 4326)::text");
       await pool.query("CREATE TABLE IF NOT EXISTS dravex_points (device_id text NOT NULL, kind text NOT NULL, lat double precision NOT NULL, lng double precision NOT NULL, point geometry(Point,4326) NOT NULL, recorded_at timestamptz NOT NULL DEFAULT now())");
       await pool.query("CREATE INDEX IF NOT EXISTS dravex_points_geom_idx ON dravex_points USING gist (point)");
+      // Scale Core (P3): time-ordered per-device queries need a btree on
+      // (device_id, recorded_at) even in PostGIS mode — the GiST index serves
+      // distance, not "fixes/sightings newest-first for one device".
+      await pool.query("CREATE INDEX IF NOT EXISTS dravex_points_time_idx ON dravex_points (device_id, recorded_at)");
       postgis = true;
       console.log("Dravex storage: PostGIS spatial mirror enabled (GiST index on dravex_points)");
     } catch (_) {

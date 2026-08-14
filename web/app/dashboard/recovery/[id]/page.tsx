@@ -5,17 +5,24 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   getDevice,
+  getEventPage,
   getEvidencePack,
-  getFixes,
+  getFixPage,
   getRecoveryCase,
-  getSightings,
+  getSightingPage,
   sendCommand,
   setDeviceLost,
   setRecoveryMessage,
   transferDevice,
   verifyDevice,
 } from "@/lib/api";
-import type { LocationFix, PairedDevice, RecoveryCase, CommunitySighting } from "@/lib/api";
+import type {
+  CommunitySighting,
+  DeviceEvent,
+  LocationFix,
+  PairedDevice,
+  RecoveryCase,
+} from "@/lib/api";
 import {
   AlertTriangleIcon,
   AlarmIcon,
@@ -46,10 +53,60 @@ const LIFECYCLE_LABEL: Record<string, string> = {
 
 const SOURCE_LABEL: Record<string, string> = {
   wifi: "Wi-Fi positioning",
+  wifi_resolved: "Wi-Fi (resolved)",
   ip: "IP geolocation",
   gps: "GPS",
+  ble: "Bluetooth sighting",
   last_known: "Last known",
 };
+
+/** Mirrors the server's eventTitle() so the paged events feed renders nicely. */
+function eventTitle(e: DeviceEvent): string {
+  switch (e.type) {
+    case "lost":
+      return "Reported lost — beacon armed";
+    case "found":
+      return "Marked found";
+    case "reconnected":
+      return "Back online";
+    case "sim_change":
+      return "SIM card changed";
+    case "recovered":
+      return "Verified recovered";
+    case "transfer":
+      return "Ownership transferred";
+    case "pair":
+      return "Device paired";
+    default:
+      return e.type.replace(/_/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
+  }
+}
+
+/** Append a newer-fetched page to an accumulated newest-first array, deduped. */
+function appendUnique<T>(prev: T[], next: T[], key: (item: T) => string): T[] {
+  if (next.length === 0) return prev;
+  const seen = new Set(prev.map(key));
+  const fresh = next.filter((item) => !seen.has(key(item)));
+  return [...prev, ...fresh];
+}
+
+/**
+ * Timeline entry types covered by the paginated feeds. The case's merged
+ * timeline still supplies the non-bulk entries (commands, evidence, finder
+ * messages) so nothing is lost — those are few and fetched once.
+ */
+const BULK_TIMELINE_TYPES = new Set([
+  "fix",
+  "sighting",
+  "lost",
+  "stolen",
+  "found",
+  "recovered",
+  "reconnected",
+  "sim_change",
+  "verification",
+  "transfer",
+]);
 
 const LEVEL_STYLE: Record<string, string> = {
   high: "bg-emerald-50 text-emerald-700 ring-emerald-600/20",
@@ -196,8 +253,18 @@ export default function RecoveryDetailPage() {
 
   const [device, setDevice] = useState<PairedDevice | null>(null);
   const [kase, setKase] = useState<RecoveryCase | null>(null);
+  // Scale Core (P4/P5): history is fetched page-by-page, newest first. The
+  // arrays accumulate as the user loads older history; the map and timeline
+  // render only what has been fetched so far.
   const [fixes, setFixes] = useState<LocationFix[]>([]);
   const [sightings, setSightings] = useState<CommunitySighting[]>([]);
+  const [events, setEvents] = useState<DeviceEvent[]>([]);
+  const [fixCursor, setFixCursor] = useState<string | null>(null);
+  const [sightCursor, setSightCursor] = useState<string | null>(null);
+  const [evCursor, setEvCursor] = useState<string | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyEnded, setHistoryEnded] = useState(false);
+  const [historyError, setHistoryError] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -206,18 +273,52 @@ export default function RecoveryDetailPage() {
 
   const load = useCallback(async () => {
     setErr("");
-    const [dev, k, fx, sg] = await Promise.all([
+    setHistoryEnded(false);
+    const [dev, k, fPage, sPage, ePage] = await Promise.all([
       getDevice(id),
       getRecoveryCase(id),
-      getFixes(id, 50),
-      getSightings(id),
+      getFixPage(id, { limit: 50 }),
+      getSightingPage(id, { limit: 50 }),
+      getEventPage(id, { limit: 50 }),
     ]);
     setDevice(dev);
     setKase(k);
-    setFixes(fx);
-    setSightings(sg);
+    setFixes(fPage?.items ?? []);
+    setSightings(sPage?.items ?? []);
+    setEvents(ePage?.items ?? []);
+    setFixCursor(fPage?.nextCursor ?? null);
+    setSightCursor(sPage?.nextCursor ?? null);
+    setEvCursor(ePage?.nextCursor ?? null);
+    setHistoryEnded(
+      !(fPage?.hasMore || sPage?.hasMore || ePage?.hasMore),
+    );
     setLoading(false);
   }, [id]);
+
+  /** Fetch the next page of each feed and append — never reloads the case. */
+  const loadOlder = useCallback(async () => {
+    if (historyLoading || historyEnded) return;
+    setHistoryLoading(true);
+    setHistoryError("");
+    try {
+      const [fPage, sPage, ePage] = await Promise.all([
+        fixCursor ? getFixPage(id, { limit: 50, cursor: fixCursor }) : Promise.resolve(null),
+        sightCursor ? getSightingPage(id, { limit: 50, cursor: sightCursor }) : Promise.resolve(null),
+        evCursor ? getEventPage(id, { limit: 50, cursor: evCursor }) : Promise.resolve(null),
+      ]);
+      setFixes((prev) => appendUnique(prev, fPage?.items ?? [], (f) => f.id ?? `${f.timestamp}`));
+      setSightings((prev) => appendUnique(prev, sPage?.items ?? [], (s) => s.id ?? `${s.at}`));
+      setEvents((prev) => appendUnique(prev, ePage?.items ?? [], (e) => e.id ?? `${e.type}${e.at}`));
+      setFixCursor(fPage?.nextCursor ?? null);
+      setSightCursor(sPage?.nextCursor ?? null);
+      setEvCursor(ePage?.nextCursor ?? null);
+      if (!(fPage?.hasMore || sPage?.hasMore || ePage?.hasMore)) setHistoryEnded(true);
+    } catch {
+      setHistoryError("Could not load older history — the server may be offline. Try again.");
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, [id, fixCursor, sightCursor, evCursor, historyLoading, historyEnded]);
 
   useEffect(() => {
     load();
@@ -227,6 +328,69 @@ export default function RecoveryDetailPage() {
     setToast(msg);
     setTimeout(() => setToast(""), 5000);
   };
+
+  /**
+   * One newest-first merged timeline: the paginated bulk feeds (fixes,
+   * sightings, events) plus the case's non-bulk entries (commands, evidence,
+   * finder messages) that the feeds don't carry. Deduped so a feed boundary
+   * can never render the same event twice.
+   */
+  const timeline = useMemo(() => {
+    interface Entry {
+      at: string;
+      type: string;
+      title: string;
+      detail?: Record<string, unknown> | null;
+      key: string;
+    }
+    const entries: Entry[] = [];
+    const seen = new Set<string>();
+    const push = (e: Entry) => {
+      if (seen.has(e.key)) return;
+      seen.add(e.key);
+      entries.push(e);
+    };
+    for (const f of fixes) {
+      push({
+        at: f.timestamp || f.receivedAt || "",
+        type: "fix",
+        title: "Location fix",
+        detail: { lat: f.lat, lng: f.lng, source: f.source, accuracy: f.accuracy ?? null },
+        key: `fix::${f.id ?? f.timestamp}`,
+      });
+    }
+    for (const s of sightings) {
+      push({
+        at: s.at || s.receivedAt || "",
+        type: "sighting",
+        title: "Community sighting",
+        detail: { lat: s.lat, lng: s.lng, accuracy: s.accuracy ?? null },
+        key: `sighting::${s.id ?? s.at}`,
+      });
+    }
+    for (const e of events) {
+      push({
+        at: e.at || "",
+        type: e.type,
+        title: eventTitle(e),
+        detail: e.detail || null,
+        key: `event::${e.id ?? `${e.type}${e.at}`}`,
+      });
+    }
+    if (kase) {
+      for (const t of kase.timeline) {
+        if (BULK_TIMELINE_TYPES.has(t.type)) continue; // already from the feeds
+        push({
+          at: t.at,
+          type: t.type,
+          title: t.title,
+          detail: t.detail ?? null,
+          key: `extra::${t.type}::${t.at}`,
+        });
+      }
+    }
+    return entries.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0));
+  }, [fixes, sightings, events, kase]);
 
   async function confirmAction(title: string, detail: string, fn: () => Promise<void>) {
     if (!window.confirm(`${title}\n\n${detail}`)) return;
@@ -639,19 +803,21 @@ export default function RecoveryDetailPage() {
             )}
           </Card>
 
-          {/* Timeline */}
+          {/* Timeline — Scale Core: newest page first, older history appended */}
           <Card className="p-5">
             <div className="mb-4 flex items-center justify-between">
               <h3 className="text-sm font-semibold text-ink">Recovery timeline</h3>
-              <span className="font-mono text-[11px] text-ink-faint">{kase.timeline.length} events</span>
+              <span className="font-mono text-[11px] text-ink-faint">
+                {timeline.length} loaded{historyEnded && timeline.length > 0 ? " · complete" : ""}
+              </span>
             </div>
-            {kase.timeline.length === 0 ? (
+            {timeline.length === 0 ? (
               <p className="text-sm text-ink-muted">No timeline events yet — fixes and sightings will appear here.</p>
             ) : (
               <ol className="relative space-y-4 pl-1">
-                {kase.timeline.map((t, i) => (
+                {timeline.map((t, i) => (
                   <li key={`${t.type}-${t.at}-${i}`} className="relative flex gap-3">
-                    {i < kase.timeline.length - 1 ? (
+                    {i < timeline.length - 1 ? (
                       <span className="absolute left-[11px] top-7 h-[calc(100%-8px)] w-px bg-slate-200" />
                     ) : null}
                     <span className={`mt-1 h-[9px] w-[9px] shrink-0 rounded-full ${kindDot(t.type)}`} />
@@ -680,6 +846,24 @@ export default function RecoveryDetailPage() {
                 ))}
               </ol>
             )}
+            <div className="mt-5 flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
+              <button
+                type="button"
+                className="btn-ghost"
+                onClick={loadOlder}
+                disabled={historyLoading || historyEnded}
+              >
+                {historyLoading ? (
+                  <RefreshIcon className="h-4 w-4 animate-spin" />
+                ) : historyEnded ? (
+                  <CheckCircleIcon className="h-4 w-4 text-emerald-600" />
+                ) : (
+                  <RefreshIcon className="h-4 w-4" />
+                )}
+                {historyEnded ? "You've reached the beginning" : "Load older history"}
+              </button>
+              {historyError ? <p className="text-xs text-amber-700">{historyError}</p> : null}
+            </div>
           </Card>
 
           {/* Honest limits */}

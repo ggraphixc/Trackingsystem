@@ -190,7 +190,7 @@ async function scenarioA(client, deviceId) {
   const beacon = beaconFor(deviceId);
   const s = await api("/api/sightings", { beacon, lat: 6.53, lng: 3.385, accuracy: 15 });
   const sightings = await api(`/api/devices/${deviceId}/sightings`);
-  if (!s.ok || sightings.length !== 1) throw new Error("A5: sighting not stored");
+  if (!s.ok || sightings.items.length !== 1) throw new Error("A5: sighting not stored");
   console.log(`[A5] community sighting stored (beacon ${beacon}) ✓`);
 
   // 6. Owner received alerts: stolen, sim_change, sighting.
@@ -255,7 +255,7 @@ async function scenarioB(client, deviceId) {
     timestamp: new Date().toISOString(), confidence: 55,
   });
   const fixes = await api(`/api/devices/${deviceId}/fixes?limit=5`);
-  const last = fixes[0];
+  const last = fixes.items[0];
   if (!fix || last.source !== "ip") throw new Error("B4: honest IP fallback fix missing");
   if (!Array.isArray(last.networks) || last.networks[0]?.ssid !== "Cafe-Wifi") throw new Error("B4: fingerprint not retained");
   const ev = await api(`/api/devices/${deviceId}`);
@@ -353,7 +353,7 @@ async function scenarioD(client, deviceId) {
   if (!purge.ok) throw new Error("D1: purge endpoint failed");
   const fixes = await api(`/api/devices/${deviceId}/fixes?limit=50`);
   const evidence = await api(`/api/devices/${deviceId}/evidence`);
-  if (fixes.some((f) => f.timestamp === old)) throw new Error("D1: old fix survived purge");
+  if (fixes.items.some((f) => f.timestamp === old)) throw new Error("D1: old fix survived purge");
   if (evidence.some((e) => e.capturedAt === old)) throw new Error("D1: old evidence survived purge");
   if (purge.purged.fixes < 1 || purge.purged.evidence < 1) throw new Error("D1: purge counts wrong");
   console.log(`[D1] retention 30 days → purge removed ${purge.purged.fixes} fix(es), ${purge.purged.evidence} evidence, ${purge.purged.sightings} sightings ✓`);

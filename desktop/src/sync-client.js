@@ -153,7 +153,10 @@ class SyncClient {
 
   /** Community sightings for a device (newest first). */
   async getSightings(deviceId) {
-    return this._req("GET", `/api/devices/${deviceId}/sightings`);
+    // Scale Core: the API now returns a paginated envelope; the agent only
+    // needs the newest page, so unwrap .items (older agents keep working).
+    const res = await this._req("GET", `/api/devices/${deviceId}/sightings?limit=50`);
+    return Array.isArray(res) ? res : (res && res.items) || [];
   }
 
   /** Captured webcam evidence for a device (newest first). */
@@ -166,9 +169,10 @@ class SyncClient {
     return this._req("GET", `/api/devices/${deviceId}`);
   }
 
-  /** Location-fix history, newest first (server caps at 100). */
+  /** Location-fix history, newest first (cursor-paginated since Scale Core). */
   async getFixes(deviceId, limit = 30) {
-    return this._req("GET", `/api/devices/${deviceId}/fixes?limit=${limit}`);
+    const res = await this._req("GET", `/api/devices/${deviceId}/fixes?limit=${limit}`);
+    return Array.isArray(res) ? res : (res && res.items) || [];
   }
 
   /**

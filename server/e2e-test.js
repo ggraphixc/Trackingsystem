@@ -49,8 +49,8 @@ async function api(path, body) {
   };
   await client.postFix(deviceId, fix);
   const fixes = await api(`/api/devices/${deviceId}/fixes`);
-  console.log(`[3] fixes stored: ${fixes.length} (source=${fixes[0]?.source})`);
-  if (fixes[0]?.source !== "wifi") throw new Error("fix not stored");
+  console.log(`[3] fixes stored: ${fixes.items.length} (source=${fixes.items[0]?.source})`);
+  if (fixes.items[0]?.source !== "wifi") throw new Error("fix not stored");
 
   // 4. Agent uploads webcam evidence.
   await client.postEvidence(deviceId, "data:image/png;base64,AAAA");
@@ -197,7 +197,7 @@ async function api(path, body) {
   };
   await client.postFix(deviceId, wifiFix);
   const wifiFixes = await api(`/api/devices/${deviceId}/fixes`);
-  const latestFix = wifiFixes[0];
+  const latestFix = wifiFixes.items[0];
   console.log(
     `[19] wifi fingerprint: networks=${Array.isArray(latestFix?.networks) ? latestFix.networks.length : "none"} firstBssid=${latestFix?.networks?.[0]?.bssid}`,
   );
@@ -231,9 +231,9 @@ async function api(path, body) {
   });
   const sightings = await api(`/api/devices/${deviceId}/sightings`);
   console.log(
-    `[21] sighting: reportOk=${sighting.ok} stored=${sightings.length} beacon=${beacon} loc=${sightings[0]?.lat.toFixed(4)},${sightings[0]?.lng.toFixed(4)}`,
+    `[21] sighting: reportOk=${sighting.ok} stored=${sightings.items.length} beacon=${beacon} loc=${sightings.items[0]?.lat.toFixed(4)},${sightings.items[0]?.lng.toFixed(4)}`,
   );
-  if (!sighting.ok || sightings.length !== 1) throw new Error("sighting not stored");
+  if (!sighting.ok || sightings.items.length !== 1) throw new Error("sighting not stored");
 
   // 22. Because the device is lost, the sighting raised an in-app alert.
   const alerts2 = await api("/api/alerts/latest");
@@ -249,8 +249,8 @@ async function api(path, body) {
     lng: 3.4,
   });
   const ghosts = await api(`/api/devices/${deviceId}/sightings`);
-  console.log(`[23] ghost beacon: ok=${ghost.ok} deviceSightingsStill=${ghosts.length}`);
-  if (!ghost.ok || ghosts.length !== 1) throw new Error("ghost beacon leaked");
+  console.log(`[23] ghost beacon: ok=${ghost.ok} deviceSightingsStill=${ghosts.items.length}`);
+  if (!ghost.ok || ghosts.items.length !== 1) throw new Error("ghost beacon leaked");
 
   // 24. Device list exposes the new phone-first fields.
   const devices2 = await api("/api/devices");

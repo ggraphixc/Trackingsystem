@@ -286,9 +286,9 @@ Zero-dependency Node HTTP server; dual-mode storage (JSON file ↔ Postgres when
 | `POST /api/pair/claim` | code (credential) | link agent → `{deviceId, token}`; accepts `staticBeacon` |
 | `GET /api/devices` | owner | all paired devices |
 | `GET /api/devices/:id` | owner/device | detail (events, sightings, meta) |
-| `GET/POST /api/devices/:id/fixes` | owner/device / device | read / upload fixes |
+| `GET/POST /api/devices/:id/fixes` | owner/device / device | **cursor-paginated read** (Scale Core) / upload fixes |
 | `POST /api/devices/:id/batch` | device | offline-vault burst sync |
-| `GET/POST /api/devices/:id/events` | device / owner+device | SIM changes, reconnects |
+| `GET/POST /api/devices/:id/events` | owner/device / device | **cursor-paginated read** / SIM changes, reconnects |
 | `POST /api/devices/:id/lost` | owner | lost/found + recovery code + registry |
 | `POST /api/devices/:id/verify` | owner | **Verified → Recovered** lifecycle step (resolves registry, `recovered` event) |
 | `POST /api/devices/:id/transfer` | owner | ownership handover — rotate credential, clear registry, fresh pairing code |
@@ -297,7 +297,7 @@ Zero-dependency Node HTTP server; dual-mode storage (JSON file ↔ Postgres when
 | `POST /api/devices/:id/contact` | public (rate-limited) | anonymous finder→owner message (only stored while lost) |
 | `POST /api/geolocate` | owner/device | BSSID fingerprint → real coordinate (Google/Mozilla, cached; 501 honest when unconfigured) |
 | `GET /api/nearest` | owner | nearest device fix to a point (PostGIS `ST_Distance` on Neon / haversine in file mode) |
-| `GET /api/devices/:id/sightings` | owner/device | community sightings |
+| `GET /api/devices/:id/sightings` | owner/device | **cursor-paginated** community sightings |
 | `GET/POST /api/devices/:id/evidence` | owner/device / device | webcam evidence (enriched: source, `expiresAt`, retention, sha256 integrity) |
 | `GET /api/devices/:id/case` | owner/device | **Phase-3 Recovery Case** — lifecycle state, case status (OPEN/ACTIVE RECOVERY/RECOVERED/CLOSED), merged timeline, confidence + explainable factors |
 | `GET /api/devices/:id/evidence-pack` | owner | **Phase-3 Evidence Pack export** — JSON bundle (device identity, incident, timeline, location history, sightings, commands, evidence index); retention-respecting, never finder identity |
@@ -327,12 +327,37 @@ Zero-dependency Node HTTP server; dual-mode storage (JSON file ↔ Postgres when
 > behavior applies. Device endpoints (`fixes`, `batch`, `events`, `commands`)
 > still require the per-device token.
 
-**Limits:** fixes 100/device, alerts 50 ring buffer, sightings 50/device,
-body cap 5 MB (evidence data-URLs), sighting alert throttle 30 min. Rate
-limiters (sliding 60 s, per-IP): check 30/min, claim 10/min (codes lock after
-5 failed attempts), sightings 30/min (+ 5-min dedupe by beacon+position),
-contact 5/min. Alert delivery: web-push + SMS fallback + `ALERT_WEBHOOK_URL`
-(email/webhook sink).
+**Scale Core pagination (all three history feeds).** `GET .../fixes`,
+`.../events` and `.../sightings` return a page envelope:
+
+```json
+{ "items": [...], "limit": 50, "hasMore": true, "nextCursor": "<opaque>" }
+```
+
+- Newest first; **stable compound cursor** `base64url("<ISO at>::<uuid id>")`
+  — the cursor is the last item of the previous page, so pages never overlap
+  or skip, and new data arriving between pages cannot shift it (append-only).
+- Default `limit` 50, max 100 (excess clamped), malformed/zero limit → 400.
+- Invalid cursor → 400; a well-formed cursor whose item was purged → 404
+  (the client restarts from the first page).
+- Optional filters (P6): `dateFrom`, `dateTo` (ISO timestamps, inclusive) and
+  `source` — `gps | wifi_resolved | wifi | ip | ble | last_known`. Filters
+  combine with the cursor (the cursor is a position inside the *filtered*
+  feed). Sightings carry no location source, so `source` on that feed is
+  rejected with 400 rather than silently ignored.
+- The **latest fix stays in the device summary** (`GET /api/devices/:id` →
+  `lastFix`) — it is never paged out of reach.
+- Both storage modes (JSON file and Neon blob) serve the identical contract
+  from the same in-memory store; per-device history bounds raised to fixes
+  2000, events 2000, sightings 500 (still bounded so the JSON/JSONB blob
+  cannot grow without limit).
+
+**Limits:** history fixes 2000/device, events 2000/device, sightings
+500/device, alerts 50 ring buffer, body cap 5 MB (evidence data-URLs),
+sighting alert throttle 30 min. Rate limiters (sliding 60 s, per-IP): check
+30/min, claim 10/min (codes lock after 5 failed attempts), sightings 30/min
+(+ 5-min dedupe by beacon+position), contact 5/min. Alert delivery: web-push
++ SMS fallback + `ALERT_WEBHOOK_URL` (email/webhook sink).
 
 **Phase-3 recovery notifications:** new alert types `offline` (lost device
 quiet for `OFFLINE_ALERT_HOURS`, default 6 — one per quiet episode, honest
@@ -340,6 +365,12 @@ quiet for `OFFLINE_ALERT_HOURS`, default 6 — one per quiet episode, honest
 `command_ack` (command executed while lost), `evidence` (capture while lost).
 Every device alert links to its recovery case from the bell and the Alerts
 page. All reuse the existing throttle/cooldown machinery — no duplicate spam.
+
+**Existence-leak guard (P7):** device-scoped routes authenticate *before*
+resolving the device — an unauthenticated request for an unknown `deviceId`
+gets the same `401` as one for a real device (no oracle). With a valid
+credential, a missing device is a plain `404`. Cross-owner reads stay `401`;
+a session scopes strictly to its own devices (`403` for other owners).
 
 ---
 
@@ -354,7 +385,10 @@ devices[]  { deviceId, hostname, serialNumber, imei, platform, token, staticBeac
              commands[], events[], sightings[], lost, recoveryCode, verifiedAt,
              transferredAt, recoveryMessage, contactMessages[] }
 geoCache   { "A0:36:9F:11:22:33": { lat, lng, accuracy, at } }   (30-day TTL)
-dravex_points (Neon/PostGIS) { device_id, kind (fix|sighting), point geometry(Point,4326), recorded_at } + GiST index
+dravex_points (Neon/PostGIS) { device_id, kind (fix|sighting), point geometry(Point,4326), recorded_at }
+            + GiST index (distance) + btree (device_id, recorded_at) — the
+            btree is the Scale-Core time-ordered per-device path; degraded
+            non-PostGIS hosts use plain columns + (device_id, recorded_at)
 stolen[]   { id, deviceId, type, imei, serialNumber, label, status(reported|resolved),
              reportedAt, resolvedAt }
 alerts[]   { id, type, deviceId, hostname, body, at, read }
@@ -368,6 +402,18 @@ settings   { ownerPhone, smsEnabled, smsLastSentAt, smsLastResult }
 devices[] also carry `ownerId` (the account that owns the device, null for
 legacy/key-claimed devices) and Phase 2.5 kept `verifiedAt`, `transferredAt`,
 `recoveryMessage`, `contactMessages[]` and `recoveryCode`.
+
+**Scale Core — where history lives:** fixes/events/sightings live inside the
+per-device arrays (JSON file, or the single `dravex_kv` JSONB blob on Neon).
+Cursor pagination therefore runs server-side over the in-memory contract in
+BOTH modes — no per-row history tables exist, and none were introduced
+(history is bounded: 2000 fixes / 2000 events / 500 sightings per device,
+then trimmed oldest-first). The `dravex_points` mirror is the only row-level
+history table (latest fix + sightings) and is what the PostGIS queries read;
+its `(device_id, recorded_at)` btree backs newest-first spatial reads. If a
+future milestone needs SQL-side history pagination, a `dravex_history`
+(device_id, kind, at, id, payload) mirror with the same indexes would be the
+non-breaking addition — out of scope here.
 
 ---
 
@@ -449,6 +495,14 @@ Next.js 15 + Tailwind, static-export friendly, owner key in localStorage.
   an issue banner).
 - Public finder page `/recover/:id` (outside the dashboard, no auth) — the
   Phase-3 community recovery experience.
+- **Scale Core history UX:** the Recovery Command Center fetches the newest
+  page of fixes/events/sightings only; a **"Load older history"** control
+  advances all three cursors in lockstep, appending and deduping (by stable
+  id) into one merged newest-first timeline. The recovery map renders only
+  what has been fetched (latest fixes + sightings first), growing
+  incrementally — it never downloads the full history. The case itself is
+  fetched once; older history never reloads it. States handled: loading,
+  empty, network failure (retry), and end-of-history.
 - Components: `device-alerts`, `notification-bell` (Web Push), UI kit
   (Card/StatCard/ProgressBar/MapPreview…).
 - Design: `design-system/dravex/MASTER.md` tokens (trust blue `#2563EB`,

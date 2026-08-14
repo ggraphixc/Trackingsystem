@@ -22,6 +22,8 @@ export const DEFAULT_SERVER_URL = SERVER_URL_ENV.replace(/\/+$/, "");
 export interface DeviceEvent {
   type: string; // sim_change | reconnected | …
   at: string;
+  /** stable unique id (Scale Core — pagination cursor tiebreaker) */
+  id?: string;
   detail?: Record<string, unknown>;
 }
 
@@ -38,6 +40,8 @@ export interface CommunitySighting {
   accuracy: number | null;
   at: string;
   receivedAt: string;
+  /** stable unique id (Scale Core) */
+  id?: string;
 }
 
 export interface PairedDevice {
@@ -197,8 +201,68 @@ export async function listDevices(): Promise<PairedDevice[]> {
   return (await req<PairedDevice[]>("/api/devices")) ?? [];
 }
 
+/* ---------------- Scale Core: paginated history feeds ---------------- */
+
+/** One page of a cursor-paginated history feed (newest first). */
+export interface HistoryPage<T> {
+  items: T[];
+  limit: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+}
+
+/** Optional recovery-history filters (dateFrom/dateTo are ISO timestamps). */
+export interface HistoryFilters {
+  dateFrom?: string;
+  dateTo?: string;
+  /** fixes only — one of gps | wifi_resolved | wifi | ip | ble | last_known */
+  source?: string;
+}
+
+export interface HistoryQuery extends HistoryFilters {
+  limit?: number;
+  cursor?: string | null;
+}
+
+function historyQueryString(q: HistoryQuery): string {
+  const p = new URLSearchParams();
+  if (q.limit != null) p.set("limit", String(q.limit));
+  if (q.cursor) p.set("cursor", q.cursor);
+  if (q.dateFrom) p.set("dateFrom", q.dateFrom);
+  if (q.dateTo) p.set("dateTo", q.dateTo);
+  if (q.source) p.set("source", q.source);
+  const s = p.toString();
+  return s ? `?${s}` : "";
+}
+
+/** One page of location fixes, newest first. */
+export async function getFixPage(
+  deviceId: string,
+  q: HistoryQuery = {},
+): Promise<HistoryPage<LocationFix> | null> {
+  return req<HistoryPage<LocationFix>>(`/api/devices/${deviceId}/fixes${historyQueryString(q)}`);
+}
+
+/** One page of lifecycle events, newest first. */
+export async function getEventPage(
+  deviceId: string,
+  q: HistoryQuery = {},
+): Promise<HistoryPage<DeviceEvent> | null> {
+  return req<HistoryPage<DeviceEvent>>(`/api/devices/${deviceId}/events${historyQueryString(q)}`);
+}
+
+/** One page of community sightings, newest first (no location source filter). */
+export async function getSightingPage(
+  deviceId: string,
+  q: HistoryQuery = {},
+): Promise<HistoryPage<CommunitySighting> | null> {
+  const { source: _omit, ...rest } = q;
+  return req<HistoryPage<CommunitySighting>>(`/api/devices/${deviceId}/sightings${historyQueryString(rest)}`);
+}
+
+/** Convenience: the newest page of sightings as a plain array. */
 export async function getSightings(deviceId: string): Promise<CommunitySighting[]> {
-  return (await req<CommunitySighting[]>(`/api/devices/${deviceId}/sightings`)) ?? [];
+  return (await getSightingPage(deviceId, { limit: 50 }))?.items ?? [];
 }
 
 /**
@@ -265,6 +329,8 @@ export interface LocationFix {
   confidence?: number | null;
   timestamp: string;
   receivedAt?: string;
+  /** stable unique id (Scale Core) */
+  id?: string;
   networks?: number | WifiNetwork[];
   ipAddress?: string;
   battery?: number;
@@ -275,9 +341,9 @@ export async function getDevice(deviceId: string): Promise<PairedDevice | null> 
   return req<PairedDevice>(`/api/devices/${deviceId}`);
 }
 
-/** Location history for one device, newest first. */
+/** Convenience: the newest page of location fixes as a plain array. */
 export async function getFixes(deviceId: string, limit = 50): Promise<LocationFix[]> {
-  return (await req<LocationFix[]>(`/api/devices/${deviceId}/fixes?limit=${limit}`)) ?? [];
+  return (await getFixPage(deviceId, { limit }))?.items ?? [];
 }
 
 /**
