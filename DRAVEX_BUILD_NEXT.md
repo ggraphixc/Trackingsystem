@@ -267,6 +267,9 @@ hardware/networks. All three are in the next milestone (§14).
   - `server/e2e-reset.js` — **6 steps** (forgot → deliver → reset → login)
   - `server/e2e-theft.js` — **scenarios A/B/C/D** (hermetic self-booted server;
     `--live` replay against production also passes)
+  - `server/e2e-recovery.js` — **63 checks** (Phase-3: confidence engine unit
+    checks, lifecycle transitions, evidence retention + pack export, finder
+    contact privacy, recovery-API auth) — hermetic self-booted server
 - `web/` production build passes; desktop `npm run check` + electron smoke pass;
   Android compiles in CI (GitHub Actions `assembleDebug` = the compile gate).
 - No change violates the honesty contract (§4) or the canonical spec.

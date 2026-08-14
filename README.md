@@ -4,7 +4,8 @@ A loss-prevention, recovery, and sustainability platform for **laptops, desktops
 See **[DRAVEX_NEXTGENE.md](DRAVEX_NEXTGENE.md)** — the master specification (architecture, anti-theft flows, API, schema, roadmap).
 Historical planning lives in **[PLAN.md](PLAN.md)**.
 
-> **Status:** Phase 1–1.5 built & deployed.
+> **Status:** Phase 1–3 built, tested and deployed (MVP → fidelity/hardening →
+> recovery intelligence).
 > `desktop/` = the agent app **installed on laptops** (Windows/macOS/Linux).
 > `web/` = the **command center** (dashboard for owners/admins).
 > Agents sync to the **Dravex sync server** (`server/`), which stores in

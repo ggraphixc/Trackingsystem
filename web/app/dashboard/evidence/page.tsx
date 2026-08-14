@@ -1,9 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { checkServerHealth, getEvidence, listDevices, sendCommand } from "@/lib/api";
+import { checkServerHealth, getEvidence, getEvidencePack, listDevices, sendCommand } from "@/lib/api";
 import type { EvidenceItem, PairedDevice } from "@/lib/api";
-import { CameraIcon, EyeIcon } from "@/components/icons";
+import { CameraIcon, DocumentTextIcon, EyeIcon } from "@/components/icons";
 import { Card, EmptyState, SectionTitle } from "@/components/ui";
 
 /** Demo evidence placeholders so the gallery is alive before any real capture. */
@@ -24,6 +24,7 @@ function demoEvidence(): EvidenceItem[] {
       dataUrl: `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`,
       capturedAt: time.toISOString(),
       receivedAt: time.toISOString(),
+      source: "webcam",
     };
   });
 }
@@ -70,6 +71,24 @@ export default function EvidencePage() {
     setTimeout(() => setToast(""), 5000);
   }
 
+  async function exportPack(deviceId: string, hostname?: string | null) {
+    const pack = await getEvidencePack(deviceId);
+    if (!pack) {
+      setToast("Could not build the evidence pack — check the server (owner auth required).");
+      setTimeout(() => setToast(""), 5000);
+      return;
+    }
+    const blob = new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `dravex-evidence-pack-${(hostname ?? deviceId).slice(0, 12)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    setToast("Evidence pack exported — retention policy respected (expired evidence excluded).");
+    setTimeout(() => setToast(""), 5000);
+  }
+
   const allEvidence: EvidenceWithLabel[] = devices.flatMap((d) =>
     (evidenceByDevice[d.deviceId] ?? []).map((e) => ({
       ...e,
@@ -86,7 +105,7 @@ export default function EvidencePage() {
     <div className="animate-fade-up">
       <SectionTitle
         eyebrow="Thief catcher"
-        title="Webcam evidence"
+        title="Evidence Center"
         action={
           !serverOk ? (
             <span className="chip bg-amber-50 text-amber-700 ring-1 ring-inset ring-amber-600/20">
@@ -137,6 +156,24 @@ export default function EvidencePage() {
                   <p className="mt-1 text-xs text-ink-muted">
                     {new Date(item.capturedAt).toLocaleString("en-NG")}
                   </p>
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    <span className="chip bg-slate-100 text-slate-600">
+                      {item.source ?? "webcam"}
+                    </span>
+                    <span className={`chip ${item.retained === false ? "bg-red-50 text-red-700" : "bg-emerald-50 text-emerald-700"}`}>
+                      {item.retained === false
+                        ? `expired ${item.expiresAt ? new Date(item.expiresAt).toLocaleDateString("en-NG") : ""}`
+                        : item.expiresAt
+                          ? `retained until ${new Date(item.expiresAt).toLocaleDateString("en-NG")}`
+                          : "retained"}
+                    </span>
+                    {item.sha256 ? (
+                      <span className="chip bg-slate-100 font-mono text-slate-600" title={`SHA-256 ${item.sha256}`}>
+                        {item.sha256.slice(0, 10)}…
+                      </span>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 font-mono text-[10px] text-ink-faint">id {item.id.slice(0, 12)}</p>
                 </div>
               </Card>
             ))}
@@ -146,21 +183,30 @@ export default function EvidencePage() {
 
       {devices.length > 0 ? (
         <Card className="mt-8 p-5">
-          <h3 className="text-sm font-semibold text-ink">Capture from the dashboard</h3>
+          <h3 className="text-sm font-semibold text-ink">Capture &amp; export</h3>
           <p className="mt-1 text-sm text-ink-muted">
-            Send a webcam command to a linked agent. The agent opens the camera, snaps a photo and
-            uploads it here — even if it was never in lost mode.
+            Send a webcam command to a linked agent, or export a device&apos;s full Recovery Evidence
+            Pack (device identity, timeline, location history, sightings, commands, evidence index —
+            expired evidence excluded per the retention policy, and no finder identity).
           </p>
           <div className="mt-3 flex flex-wrap gap-2">
             {devices.map((d) => (
-              <button
-                key={d.deviceId}
-                className="btn-ghost text-xs"
-                onClick={() => capture(d.deviceId)}
-              >
-                <EyeIcon className="h-4 w-4 text-accent" />
-                Capture on {d.hostname ?? d.deviceId.slice(0, 8)}
-              </button>
+              <div key={d.deviceId} className="flex items-center gap-2">
+                <button
+                  className="btn-ghost text-xs"
+                  onClick={() => capture(d.deviceId)}
+                >
+                  <EyeIcon className="h-4 w-4 text-accent" />
+                  Capture on {d.hostname ?? d.deviceId.slice(0, 8)}
+                </button>
+                <button
+                  className="btn-ghost text-xs"
+                  onClick={() => exportPack(d.deviceId, d.hostname)}
+                >
+                  <DocumentTextIcon className="h-4 w-4 text-primary" />
+                  Export pack
+                </button>
+              </div>
             ))}
           </div>
         </Card>

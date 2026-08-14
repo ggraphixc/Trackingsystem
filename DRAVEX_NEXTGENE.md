@@ -298,7 +298,10 @@ Zero-dependency Node HTTP server; dual-mode storage (JSON file ↔ Postgres when
 | `POST /api/geolocate` | owner/device | BSSID fingerprint → real coordinate (Google/Mozilla, cached; 501 honest when unconfigured) |
 | `GET /api/nearest` | owner | nearest device fix to a point (PostGIS `ST_Distance` on Neon / haversine in file mode) |
 | `GET /api/devices/:id/sightings` | owner/device | community sightings |
-| `GET/POST /api/devices/:id/evidence` | owner/device / device | webcam evidence |
+| `GET/POST /api/devices/:id/evidence` | owner/device / device | webcam evidence (enriched: source, `expiresAt`, retention, sha256 integrity) |
+| `GET /api/devices/:id/case` | owner/device | **Phase-3 Recovery Case** — lifecycle state, case status (OPEN/ACTIVE RECOVERY/RECOVERED/CLOSED), merged timeline, confidence + explainable factors |
+| `GET /api/devices/:id/evidence-pack` | owner | **Phase-3 Evidence Pack export** — JSON bundle (device identity, incident, timeline, location history, sightings, commands, evidence index); retention-respecting, never finder identity |
+| `GET /api/public/recovery/:id` | public (rate-limited) | **Phase-3 finder view** — lost status + generic label + owner's one-way recovery message; same thin shape for unknown/not-lost IDs (anti-probe); never location/identity |
 | `GET /api/listings` | public | verified-resale browse (generic labels, price, condition) |
 | `POST /api/listings` | owner | list a **transferred** device for verified resale (price + condition) |
 | `POST /api/listings/unlist` | owner | pull a listing |
@@ -330,6 +333,13 @@ limiters (sliding 60 s, per-IP): check 30/min, claim 10/min (codes lock after
 5 failed attempts), sightings 30/min (+ 5-min dedupe by beacon+position),
 contact 5/min. Alert delivery: web-push + SMS fallback + `ALERT_WEBHOOK_URL`
 (email/webhook sink).
+
+**Phase-3 recovery notifications:** new alert types `offline` (lost device
+quiet for `OFFLINE_ALERT_HOURS`, default 6 — one per quiet episode, honest
+"quiet since" framing), `fix` (new location while lost, throttled 30 min),
+`command_ack` (command executed while lost), `evidence` (capture while lost).
+Every device alert links to its recovery case from the bell and the Alerts
+page. All reuse the existing throttle/cooldown machinery — no duplicate spam.
 
 ---
 
@@ -425,18 +435,77 @@ on macOS per `ios/README-Xcode.md`. Never promise "iPhone tracking" beyond this.
 
 Next.js 15 + Tailwind, static-export friendly, owner key in localStorage.
 
-- Landing → dashboard: **Overview** (stats, recovery banner, device activity),
-  **My Devices**, **Incidents** (reporting wizard → NPF channels), **Recovery**
-  (list + per-device recovery view), **Device Check** (live registry, IMEI +
-  serial), **Offline Recovery** (kit + action card), **Agents** (pairing, SMS
-  fallback, owner key, **owner account** create/log-in card), **Evidence**,
-  **Impact** (CO₂e), **Track** (signal ladder + commands), **Service health**
-  (Phase 2.5 observability — `GET /api/admin/health` rendered as operational
-  tiles with an issue banner).
+- Landing → dashboard: **Overview** (stats, active recovery case cards, device
+  activity), **My Devices**, **Recovery** (Command Center list: active /
+  recently recovered / recent sightings / unresolved — plus per-device
+  **Recovery Command Center** at `/dashboard/recovery/:id`), **Incidents**
+  (reporting wizard → NPF channels), **Device Check** (live registry, IMEI +
+  serial), **Evidence** (Evidence Center: source, retention/expiry, integrity,
+  Evidence Pack export), **Alerts** (Phase-3 notification feed with case
+  links), **Offline Recovery** (kit + action card), **Agents** (pairing, SMS
+  fallback, owner key, **owner account** create/log-in card), **Impact**
+  (CO₂e), **Track** (signal ladder + commands), **Service health** (Phase 2.5
+  observability — `GET /api/admin/health` rendered as operational tiles with
+  an issue banner).
+- Public finder page `/recover/:id` (outside the dashboard, no auth) — the
+  Phase-3 community recovery experience.
 - Components: `device-alerts`, `notification-bell` (Web Push), UI kit
   (Card/StatCard/ProgressBar/MapPreview…).
 - Design: `design-system/dravex/MASTER.md` tokens (trust blue `#2563EB`,
   accent orange `#F97316`, Fira Sans/Fira Code).
+
+---
+
+## 18b. Recovery Intelligence (Phase 3)
+
+### Recovery-confidence algorithm (deterministic, explainable)
+
+`server/recovery-intel.js` — a pure, deterministic 0–100 estimate labelled
+"Recovery confidence — based on freshness and strength of available signals."
+It is NOT a probability of recovery and never claims to be. Every point maps
+to a real stored signal; missing data never fabricates a factor:
+
+| Factor | Points | Rule |
+|---|---|---|
+| Signal recency | 30/24/16/8/3 | age of last fix: <1 h / <6 h / <24 h / <72 h / older |
+| Source quality | 15/12/9/6/3 | gps / wifi_resolved / wifi / ip / last_known |
+| Sighting recency | 25/15/8/2 | latest community sighting: <6 h / <24 h / <72 h / older |
+| Reconnect | +10 | `reconnectedAt` within 24 h |
+| SIM change | +10 | a `sim_change` event exists (strong reuse signal) |
+| Movement consistency | +8 | ≥2 fixes with median hop < 20 km |
+| Recent evidence | +7 | webcam evidence within 24 h |
+
+Levels: **0–29 low · 30–59 moderate · 60–79 strong · 80–100 high.** The API
+returns `{score, level, factors: [{name, impact, value}]}` — the web Recovery
+Command Center renders every factor so the owner sees WHY the score is what
+it is. Scores are not persisted; they are derived on read (no drift).
+
+### Recovery Case model
+
+`GET /api/devices/:id/case` projects ONE read-side view over the device's own
+arrays — no duplicated storage, no second lifecycle model:
+
+- `lifecycleState`: Protected → Lost → Stolen → Detected → Sighted → Verified → Recovered (derived, "furthest along" wins)
+- `caseStatus` (owner-facing): **OPEN** (never lost) · **ACTIVE RECOVERY** (lost) · **RECOVERED** (verified) · **CLOSED** (transferred)
+- `caseId` = `deviceId` (stable, UUID) — the recovery URL IS the case URL
+- `timeline`: merged events + fixes + sightings + commands (+ack) + evidence + finder messages, newest first
+- `confidence` + `factors`, `community` summary, `outcome` (recovered/transferred)
+
+### Evidence Center + Evidence Pack
+
+Evidence items are enriched with `source`, `expiresAt`, retention status and
+sha256 integrity (computed once at capture). `GET /api/devices/:id/evidence-pack`
+exports the full case bundle as JSON — it ALWAYS respects
+`evidenceRetentionDays` (expired items excluded) and NEVER includes finder
+identity or contact details.
+
+### Community recovery experience (finder flow)
+
+Owners share the public link (`/recover/<deviceId>`); a finder sees only that
+the device is reported lost + the owner's one-way message, and can send ONE
+anonymous message via the existing contact relay. No identity, phone, email
+or reporting-device position is ever exposed; unknown/not-lost IDs return the
+same thin shape (anti-probe).
 
 ---
 
@@ -480,7 +549,8 @@ identity that survives battery swaps. Server resolves static tag beacons via
 | **1.5 — hardened** | Optional auth (owner key + device tokens), ownership lock, post-flash IMEI check, tag firmware | ✅ Done |
 | **2 — fidelity** | Real Wi-Fi geolocation (server `/api/geolocate`, Google/Mozilla, cached) ✅ · PostGIS spatial mirror + `/api/nearest` ✅ · ownership transfer + verified lifecycle ✅ · finder contact relay ✅ · hardening (claim rate-limit, CORS allowlist, token-at-rest encryption) ✅ · email/webhook alert sink ✅ · Android boot re-arm + battery protection ✅ · macOS/Linux BLE watchers ✅ code (CoreBluetooth/BlueZ helpers) · iOS companion build 🔜 · live SMS provider 🔜 | 🟡 On-device validation |
 | **2.5 — production readiness** | Theft simulation lab (`server/e2e-theft.js`, scenarios A/B/C + `docs/THEFT_LAB.md`) ✅ · formal QA matrix (`DRAVEX_TEST_MATRIX.md`) ✅ · observability (`GET /api/admin/health` + web Service-health page) ✅ · per-owner accounts (register/login/logout/me, sessions, device isolation, 403 cross-owner; `server/e2e-accounts.js`) ✅ | 🟡 Accounts live; real-device matrix in progress |
-| **3 — network** | Second-life marketplace + repair network; verified listings; monetization (Paystack/Flutterwave); public recovery stats | 🔜 |
+| **3 — recovery intelligence** | **Recovery Command Center** (case view, lifecycle stepper, explainable confidence, merged timeline, schematic map, confirmed actions, honest limits) ✅ · recovery-confidence engine (`recovery-intel.js`, deterministic + factor-explainable) ✅ · recovery-case model (`GET /api/devices/:id/case`) ✅ · Evidence Center + retention-respecting Evidence Pack export ✅ · finder flow (public `/recover/:id` page, anonymous contact, anti-probe) ✅ · recovery notifications (offline/fix/command-ack/evidence alerts + case links) ✅ · Recovery-first IA (nav order, Overview active cases, Recovery list sections, Alerts page) ✅ · `server/e2e-recovery.js` (63 checks) ✅ · marketplace first slice (verified listings + interest + stats) ✅ | ✅ Code + tests |
+| **3.5 — network growth** | Repair/refurbish network, verified finders, trusted repairers, payment (Paystack/Flutterwave) behind the verified-transfer + interest pipeline | 🔜 |
 | **4 — partnerships** | NPF alignment, insurers, OEMs (power-off finding), NCC IMEI DMS, corporate fleets (B2B) | 🔜 |
 
 ---

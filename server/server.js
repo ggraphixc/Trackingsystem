@@ -43,11 +43,12 @@
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
-const { randomUUID, randomBytes, scryptSync, timingSafeEqual } = require("crypto");
+const { randomUUID, randomBytes, scryptSync, timingSafeEqual, createHash } = require("crypto");
 const { createStorage } = require("./storage");
 const { getVapidKeys, notifyAll } = require("./push");
 const { maskPhone, normalizePhone, sendSms, smsStatus } = require("./sms");
 const { resolveBeacon } = require("./beacon");
+const { recoveryConfidence, deriveCase, lifecycleState, caseStatus, buildTimeline } = require("./recovery-intel");
 
 // Zero-dependency .env loader (server/.env — gitignored). Runs before
 // storage decides its mode so DATABASE_URL is honoured. Existing process
@@ -162,6 +163,29 @@ function saveStore() {
 
 /* ---------------- helpers ---------------- */
 
+/**
+ * P3: enrich a stored evidence item with owner-facing metadata for the
+ * Evidence Center — capture source, retention/expiry status (from the N3
+ * evidenceRetentionDays policy) and sha256 integrity. The raw image itself
+ * is never re-hashed per request (computed once at capture); only the
+ * persisted hash is surfaced.
+ */
+function evidenceMeta(dev, e) {
+  const capturedAt = e.capturedAt || e.receivedAt;
+  const expiresAt = new Date(new Date(capturedAt).getTime() + retentionDays() * 24 * 3.6e6).toISOString();
+  return {
+    id: e.id,
+    dataUrl: e.dataUrl,
+    capturedAt,
+    receivedAt: e.receivedAt,
+    deviceId: dev.deviceId,
+    source: e.source || "webcam",
+    expiresAt,
+    retained: new Date(expiresAt).getTime() > Date.now(),
+    sha256: e.sha256 || null,
+  };
+}
+
 function device(id) {
   if (!store.devices[id]) {
     store.devices[id] = {
@@ -212,6 +236,23 @@ function storeFix(dev, fix) {
   dev.fixes.push(dev.lastFix);
   if (dev.fixes.length > FIX_HISTORY_LIMIT) dev.fixes = dev.fixes.slice(-FIX_HISTORY_LIMIT);
   dev.lastSeenAt = now;
+  // P5: while a device is LOST, a fresh location fix is a recovery signal
+  // worth alerting on — throttled to one per 30 min per device (the owner's
+  // phone must not buzz on every 2-min scan). SMS budget is preserved.
+  if (dev.lost && fix && fix.timestamp) {
+    const fixAgeH = (Date.now() - new Date(fix.timestamp).getTime()) / 3.6e6;
+    const nowMs = Date.now();
+    const last = dev.lastFixAlertAt ? new Date(dev.lastFixAlertAt).getTime() : 0;
+    if (fixAgeH <= 6 && nowMs - last >= 30 * 60_000) {
+      dev.lastFixAlertAt = now;
+      raiseAlert(
+        "fix",
+        dev,
+        `${dev.hostname || "Your device"} reported a new location (${fix.lat?.toFixed ? fix.lat.toFixed(4) : fix.lat}°, ${fix.lng?.toFixed ? fix.lng.toFixed(4) : fix.lng}°, ${fix.source || "?"}) — check the recovery view.`,
+        { sms: false },
+      );
+    }
+  }
 }
 
 /** Record a device event (sim_change, etc.) and refresh lastSeenAt. */
@@ -558,12 +599,45 @@ function listingLookup(query) {
 
 /* ---------------- scheduled tasks (N3 + N4) ---------------- */
 
+/**
+ * P5 "device went offline" alerts. A device can only be KNOWN offline
+ * retrospectively (there is no signal of absence), so this sweep runs on the
+ * same 6 h schedule as retention: any LOST device whose lastSeenAt is older
+ * than OFFLINE_ALERT_HOURS gets one "offline" alert per quiet episode.
+ * Cooldown is keyed on the lastSeenAt value itself — the alert fires again
+ * only if the device is seen again and then goes quiet once more (no spam on
+ * an already-quiet device across sweeps). Honest framing: this is "quiet for
+ * Xh", not a claim of tracking a powered-off device.
+ */
+const OFFLINE_ALERT_HOURS = Number(process.env.OFFLINE_ALERT_HOURS) || 6;
+
+function checkOfflineDevices() {
+  const now = Date.now();
+  const threshold = OFFLINE_ALERT_HOURS * 3.6e6;
+  for (const dev of Object.values(store.devices || {})) {
+    if (!dev.lost || !dev.lastSeenAt) continue;
+    if (dev.lastOfflineAlertedAt === dev.lastSeenAt) continue; // episode already reported
+    const quietMs = now - new Date(dev.lastSeenAt).getTime();
+    if (quietMs < threshold) continue;
+    dev.lastOfflineAlertedAt = dev.lastSeenAt;
+    saveStore();
+    raiseAlert(
+      "offline",
+      dev,
+      `${dev.hostname || "Your device"} has been quiet for ${Math.round(quietMs / 3.6e6)}h — data off or powered down. Dravex cannot track a powered-off phone; keep the IMEI trace (police → carrier) moving.`,
+      { sms: false },
+    );
+  }
+}
+
 function startScheduledTasks() {
   setInterval(purgeExpiredData, 6 * 3600 * 1000).unref();
   setInterval(runOpsHealthCheck, Math.max(10, OPS_INTERVAL_S) * 1000).unref();
+  setInterval(checkOfflineDevices, 6 * 3600 * 1000).unref();
   runOpsHealthCheck(); // baseline snapshot — never fires on a fresh process
+  checkOfflineDevices(); // sweep once at boot too
   console.log(
-    `Dravex scheduled tasks: retention sweep every 6 h (${retentionDays()} days), ops health check every ${OPS_INTERVAL_S}s`,
+    `Dravex scheduled tasks: retention sweep every 6 h (${retentionDays()} days), ops health check every ${OPS_INTERVAL_S}s, offline-quiet sweep every 6 h`,
   );
 }
 
@@ -903,6 +977,31 @@ async function route(req, res) {
         "This device is listed for verified resale by its owner — registry clean, ownership transferred.";
     }
     return json(res, 200, verdict);
+  }
+
+  // GET /api/public/recovery/:id — the Phase-3 finder experience (P4).
+  // Public, rate-limited, and deliberately thin: a good samaritan who finds
+  // a lost device lands here from the owner's shared recovery link and sees
+  // ONLY that the device is lost + the owner's one-way recovery message.
+  // NEVER exposed: location, operator, sightings, owner identity, phone,
+  // email, or the reporting device's position. Unknown and not-lost IDs
+  // return the SAME shape ({ lost: false }) so nobody can probe which IDs
+  // exist — the anti-probe pattern used by /api/sightings.
+  if (!isPost && parts[0] === "api" && parts[1] === "public" && parts[2] === "recovery" && parts[3]) {
+    if (checkLimiter.limited(req.socket.remoteAddress || "unknown")) {
+      return json(res, 429, { error: "Too many requests — try again in a minute." });
+    }
+    const dev = store.devices[parts[3]];
+    if (!dev || !dev.lost) {
+      // Identical shape for unknown AND not-lost — no existence oracle.
+      return json(res, 200, { lost: false, label: null, recoveryMessage: null });
+    }
+    return json(res, 200, {
+      lost: true,
+      label: deviceType(dev) === "phone" ? "A phone" : "A laptop",
+      recoveryMessage: dev.recoveryMessage || null,
+      caseId: dev.deviceId,
+    });
   }
 
   // GET /api/alerts/latest?since=<iso> → { alerts: [...recent], unreadCount }
@@ -1718,6 +1817,8 @@ async function route(req, res) {
                 dataUrl: item.dataUrl,
                 capturedAt: item.capturedAt || new Date().toISOString(),
                 receivedAt: new Date().toISOString(),
+                source: item.source || "webcam",
+                sha256: createHash("sha256").update(item.dataUrl).digest("hex"),
               });
               dev.lastSeenAt = new Date().toISOString();
               received++;
@@ -1945,13 +2046,24 @@ async function route(req, res) {
           dataUrl: body.dataUrl,
           capturedAt: body.capturedAt || new Date().toISOString(),
           receivedAt: new Date().toISOString(),
+          source: body.source || "webcam",
+          sha256: createHash("sha256").update(body.dataUrl).digest("hex"),
         });
         dev.lastSeenAt = new Date().toISOString();
         saveStore();
+        // P5: fresh webcam evidence on a LOST device — "evidence received".
+        if (dev.lost) {
+          raiseAlert(
+            "evidence",
+            dev,
+            `${dev.hostname || "Your device"}: new webcam evidence captured — open the Evidence gallery.`,
+            { sms: false },
+          );
+        }
         return json(res, 201, { ok: true });
       }
       if (!ownerOrDeviceOk(req, dev)) return json(res, 401, { error: "Owner key or device token required." });
-      return json(res, 200, [...dev.evidence].reverse());
+      return json(res, 200, [...dev.evidence].reverse().map((e) => evidenceMeta(dev, e)));
     }
 
     if (action === "commands") {
@@ -1964,6 +2076,16 @@ async function route(req, res) {
         cmd.executedAt = new Date().toISOString();
         metrics.commands.acked++;
         saveStore();
+        // P5: an acked command on a LOST device means the agent acted on it —
+        // the owner wants to know the moment a lock/alarm/webcam fired.
+        if (dev.lost && cmd.type) {
+          raiseAlert(
+            "command_ack",
+            dev,
+            `${dev.hostname || "Your device"} executed the ${cmd.type} command — ${cmd.type === "webcam" ? "evidence should arrive shortly" : "check the recovery view"}.`,
+            { sms: false },
+          );
+        }
         return json(res, 200, { ok: true });
       }
 
@@ -2002,6 +2124,89 @@ async function route(req, res) {
       dev.token = randomBytes(24).toString("hex");
       saveStore();
       return json(res, 200, { ok: true, token: dev.token });
+    }
+
+    // GET /api/devices/:id/case — the Phase-3 recovery case projection
+    // (lifecycle state, case status, timeline, confidence + factors). Pure
+    // read-side derivation — it references the device's own arrays, never
+    // duplicates them, and never invents signals.
+    if (action === "case" && !isPost) {
+      if (!ownerOrDeviceOk(req, dev)) return json(res, 401, { error: "Owner key or device token required." });
+      return json(res, 200, deriveCase(dev));
+    }
+
+    // GET /api/devices/:id/evidence-pack — the Phase-3 "Export Recovery
+    // Evidence Pack": a JSON bundle (device identity, incident summary,
+    // lifecycle, timeline, location history, sightings, commands, evidence
+    // index, recovery events). Respects the evidenceRetentionDays policy —
+    // evidence older than the window is EXCLUDED (never bypass retention).
+    // No finder identity is ever included. Owner only.
+    if (action === "evidence-pack" && !isPost) {
+      if (!requireOwnerOf(req, res, dev)) return;
+      const retention = retentionDays();
+      const cutoff = Date.now() - retention * 24 * 3.6e6;
+      const retainedEvidence = (dev.evidence || []).filter((e) => {
+        const at = new Date(e.capturedAt || e.receivedAt || 0).getTime();
+        return at >= cutoff;
+      });
+      const pack = {
+        generatedAt: new Date().toISOString(),
+        retentionDays: retention,
+        device: {
+          deviceId: dev.deviceId,
+          hostname: dev.hostname || null,
+          serialNumber: dev.serialNumber || null,
+          imei: dev.imei || null,
+          platform: dev.platform || null,
+          type: deviceType(dev),
+          operator: deviceOperator(dev) || null,
+          pairedAt: dev.pairedAt || null,
+        },
+        lifecycle: deriveCase(dev),
+        incident: {
+          reportedAt: (dev.events || []).find((e) => e.type === "lost")?.at || null,
+          lost: !!dev.lost,
+          recoveryMessage: dev.recoveryMessage || null,
+        },
+        timeline: buildTimeline(dev),
+        locationHistory: {
+          fixCount: (dev.fixes || []).length,
+          lastFix: dev.lastFix || null,
+          lastSeenAt: dev.lastSeenAt || null,
+          fixes: (dev.fixes || []).slice(-50).map((f) => ({
+            lat: f.lat,
+            lng: f.lng,
+            accuracy: f.accuracy ?? null,
+            source: f.source,
+            timestamp: f.timestamp || f.receivedAt,
+          })),
+        },
+        community: {
+          sightingCount: (dev.sightings || []).length,
+          sightings: (dev.sightings || []).slice(-50).map((s) => ({
+            lat: s.lat,
+            lng: s.lng,
+            accuracy: s.accuracy ?? null,
+            at: s.at || s.receivedAt,
+          })),
+        },
+        commands: (dev.commands || []).map((c) => ({
+          id: c.id,
+          type: c.type,
+          createdAt: c.createdAt,
+          executedAt: c.executedAt || null,
+        })),
+        evidence: retainedEvidence.map((e) => ({
+          id: e.id,
+          capturedAt: e.capturedAt || e.receivedAt,
+          receivedAt: e.receivedAt,
+          // Metadata only — the raw image stays in the evidence gallery.
+        })),
+        recoveryEvents: (dev.events || []).filter((e) =>
+          ["lost", "found", "reconnected", "sim_change", "recovered", "transfer"].includes(e.type),
+        ),
+      };
+      return json(res, 200, pack);
     }
 
     if (!isPost && !action) {

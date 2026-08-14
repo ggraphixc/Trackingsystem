@@ -27,6 +27,8 @@ on-device step needed · 🔜 built but awaiting real hardware · ❌ not possib
 | Claim hardening | ✅ | ✅ | ✅ | ✅ | ✅ | 10 claims/min/IP; a code locks after 5 failures (429 + code destroyed). *(auth, server code)* |
 | Alert delivery | ✅ | ✅ | ✅ | ✅ | ✅ | In-app alert always; push + SMS + webhook fire-and-forget with per-channel metrics; SMS log-mode default. *(admin health counters)* |
 | Geolocation honesty | ✅ | ✅ | ✅ | ✅ | ✅ | No `GEOLOCATION_API_KEY` → 501 `unresolved`; agent falls back to ip/last_known. *(auth [14][15])* |
+| Recovery intelligence (Phase 3) | ✅ | ✅ | ✅ | ✅ | ✅ | Deterministic 0–100 confidence with explainable factors; lifecycle Protected→Lost→Stolen→Detected→Sighted→Verified→Recovered; case projection; evidence pack respects retention; finder flow leaks no identity. *(`server/e2e-recovery.js` 63 checks; `GET /api/devices/:id/case`)* |
+| Recovery notifications (Phase 3) | ✅ | ✅ | ✅ | ✅ | ✅ | New-location, command-ack, evidence and offline-quiet alerts while lost — throttled, no duplicate spam, each links to its case. *(server + `e2e-recovery.js` B4)* |
 | Powered-off tracking | ❌ | ❌ | ❌ | ❌ | ❌ | **Not offered** — OEM hardware (Find My / Find Hub) only. Honesty contract §23. |
 | Factory-reset persistence | ❌ | ❌ | ❌ | ❌ | ❌ | **Not offered** — app is wiped; backstops are FRP/Activation Lock + registry + post-flash Device Check. |
 

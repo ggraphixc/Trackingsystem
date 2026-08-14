@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useState } from "react";
 import {
   AlertTriangleIcon,
+  BellIcon,
   CameraIcon,
   CrosshairIcon,
   DeviceMobileIcon,
@@ -24,12 +25,13 @@ import { Logo } from "@/components/ui";
 const NAV = [
   { href: "/dashboard", label: "Overview", icon: ShieldCheckIcon },
   { href: "/dashboard/devices", label: "My Devices", icon: DeviceMobileIcon },
-  { href: "/dashboard/incidents", label: "Incidents", icon: DocumentTextIcon },
   { href: "/dashboard/recovery", label: "Recovery", icon: AlertTriangleIcon },
+  { href: "/dashboard/incidents", label: "Incidents", icon: DocumentTextIcon },
   { href: "/dashboard/serial-check", label: "Device Check", icon: SearchIcon },
+  { href: "/dashboard/evidence", label: "Evidence", icon: CameraIcon },
+  { href: "/dashboard/alerts", label: "Alerts", icon: BellIcon },
   { href: "/dashboard/offline-recovery", label: "Offline Recovery", icon: WifiIcon },
   { href: "/dashboard/agents", label: "Agents", icon: CrosshairIcon },
-  { href: "/dashboard/evidence", label: "Evidence", icon: CameraIcon },
   { href: "/dashboard/impact", label: "Impact", icon: LeafIcon },
   { href: "/dashboard/admin", label: "Service health", icon: ServerIcon },
 ];

@@ -88,6 +88,15 @@ export interface EvidenceItem {
   dataUrl: string;
   capturedAt: string;
   receivedAt: string;
+  /** capture source (webcam, …) */
+  source?: string;
+  /** N3 retention policy: this item expires at expiresAt and is then purged */
+  expiresAt?: string;
+  /** false once the retention window has passed (excluded from evidence packs) */
+  retained?: boolean;
+  /** sha256 of the raw dataUrl, computed once at capture (integrity check) */
+  sha256?: string | null;
+  deviceId?: string;
 }
 
 export interface AlertItem {
@@ -588,5 +597,116 @@ export async function expressInterest(deviceId: string, message?: string): Promi
   const res = await req<{ ok: boolean }>(`/api/listings/${deviceId}/interest`, {
     message: message || undefined,
   });
+  return !!res?.ok;
+}
+
+/* ---------------- Phase 3: Recovery Intelligence & Command Center ---------------- */
+
+/** One explainable factor of the recovery-confidence estimate. */
+export interface ConfidenceFactor {
+  name: string;
+  impact: "positive" | "negative";
+  value: string;
+}
+
+/** Deterministic 0–100 recovery-confidence estimate (P1). */
+export interface RecoveryConfidence {
+  score: number;
+  level: "low" | "moderate" | "strong" | "high";
+  factors: ConfidenceFactor[];
+}
+
+/** A merged, newest-first entry in the recovery case timeline. */
+export interface CaseTimelineEntry {
+  at: string;
+  type: string;
+  title: string;
+  detail?: Record<string, unknown> | null;
+}
+
+/**
+ * The Phase-3 Recovery Case projection (P2). A read-side view over the
+ * device's own arrays — one lifecycle model, plus the owner-facing wrapper.
+ */
+export interface RecoveryCase {
+  caseId: string;
+  deviceId: string;
+  ownerId: string | null;
+  label: string;
+  lifecycleState: "protected" | "lost" | "stolen" | "detected" | "sighted" | "verified" | "recovered";
+  caseStatus: "OPEN" | "ACTIVE RECOVERY" | "RECOVERED" | "CLOSED";
+  openedAt: string | null;
+  updatedAt: string | null;
+  lost: boolean;
+  recoveryCodeArmed: boolean;
+  report: {
+    reportedAt: string | null;
+    reportedBy: string;
+    simChanged: boolean;
+    reconnected: boolean;
+  };
+  timeline: CaseTimelineEntry[];
+  signal: {
+    lastFix: {
+      lat: number;
+      lng: number;
+      accuracy: number | null;
+      source: string;
+      confidence?: number | null;
+      timestamp: string;
+    } | null;
+    fixCount: number;
+    lastSeenAt: string | null;
+    reconnectedAt: string | null;
+    online: boolean;
+  };
+  community: {
+    sightingCount: number;
+    latestSighting: { lat: number; lng: number; accuracy: number | null; at: string; receivedAt?: string } | null;
+  };
+  evidenceCount: number;
+  commandCount: number;
+  finderMessages: number;
+  confidence: RecoveryConfidence;
+  outcome: { type: "transferred" | "recovered"; at: string } | null;
+}
+
+/** Full device recovery case (lifecycle + confidence + timeline). */
+export async function getRecoveryCase(deviceId: string): Promise<RecoveryCase | null> {
+  return req<RecoveryCase>(`/api/devices/${deviceId}/case`);
+}
+
+/** The Phase-3 "Export Recovery Evidence Pack" JSON bundle (owner only). */
+export async function getEvidencePack(deviceId: string): Promise<Record<string, unknown> | null> {
+  return req<Record<string, unknown>>(`/api/devices/${deviceId}/evidence-pack`);
+}
+
+/**
+ * Public finder view (P4) — what a good samaritan sees at a shared recovery
+ * link. Deliberately thin: lost status + generic label + the owner's one-way
+ * recovery message. Never identity, location, or reporting-device position.
+ */
+export interface PublicRecovery {
+  lost: boolean;
+  label: string | null;
+  recoveryMessage: {
+    message: string;
+    contactPreference?: string | null;
+    at: string;
+  } | null;
+  caseId?: string;
+}
+
+export async function getPublicRecovery(deviceId: string): Promise<PublicRecovery | null> {
+  return req<PublicRecovery>(`/api/public/recovery/${deviceId}`);
+}
+
+/**
+ * A good samaritan who found a lost device sends the owner ONE anonymous
+ * message (P4 finder flow) — reuses the existing privacy-preserving contact
+ * relay. The sender's identity is never recorded.
+ */
+export async function sendFinderMessage(deviceId: string, message: string): Promise<boolean> {
+  const res = await req<{ ok: boolean }>(`/api/devices/${deviceId}/contact`, { message });
   return !!res?.ok;
 }

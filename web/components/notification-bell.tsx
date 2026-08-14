@@ -238,48 +238,65 @@ export default function NotificationBell() {
               </div>
             ) : (
               <ul className="divide-y divide-slate-100">
-                {alerts.map((a) => (
-                  <li key={a.id}>
-                    <button
-                      className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50"
-                      onClick={() => readAlert(a.id)}
-                    >
-                      <span
-                        className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${
-                          a.type === "sim_change"
-                            ? "bg-red-50 text-red-500"
-                            : "bg-sky-50 text-sky-500"
-                        }`}
-                      >
-                        {a.type === "sim_change" ? (
-                          <AlertTriangleIcon className="h-4 w-4" />
-                        ) : (
-                          <WifiIcon className="h-4 w-4" />
-                        )}
-                      </span>
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2">
-                          <span
-                            className={`truncate text-sm ${
-                              a.read ? "font-normal text-ink-muted" : "font-semibold text-ink"
-                            }`}
-                          >
-                            {a.hostname}
+                {alerts.map((a) => {
+                  // P5: every device alert links straight to its recovery case.
+                  const href = a.deviceId && a.deviceId !== "ops" ? `/dashboard/recovery/${a.deviceId}` : null;
+                  return (
+                    <li key={a.id}>
+                      <div className="flex w-full items-start gap-3 px-4 py-3 text-left transition-colors hover:bg-slate-50">
+                        <span
+                          className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${
+                            a.type === "sim_change"
+                              ? "bg-red-50 text-red-500"
+                              : "bg-sky-50 text-sky-500"
+                          }`}
+                        >
+                          {a.type === "sim_change" ? (
+                            <AlertTriangleIcon className="h-4 w-4" />
+                          ) : (
+                            <WifiIcon className="h-4 w-4" />
+                          )}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center gap-2">
+                            <span
+                              className={`truncate text-sm ${
+                                a.read ? "font-normal text-ink-muted" : "font-semibold text-ink"
+                              }`}
+                            >
+                              {a.hostname}
+                            </span>
+                            {!a.read ? (
+                              <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+                            ) : null}
                           </span>
-                          {!a.read ? (
-                            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
-                          ) : null}
+                          <span className="mt-0.5 block text-xs leading-relaxed text-ink-faint">
+                            {a.body}
+                          </span>
+                          <span className="mt-1 flex items-center gap-2 font-mono text-[10px] text-ink-faint">
+                            {new Date(a.at).toLocaleString("en-NG")}
+                            {href ? (
+                              <Link
+                                href={href}
+                                onClick={() => readAlert(a.id)}
+                                className="font-sans font-medium text-primary hover:text-primary-dark"
+                              >
+                                Open case →
+                              </Link>
+                            ) : null}
+                          </span>
                         </span>
-                        <span className="mt-0.5 block text-xs leading-relaxed text-ink-faint">
-                          {a.body}
-                        </span>
-                        <span className="mt-1 block font-mono text-[10px] text-ink-faint">
-                          {new Date(a.at).toLocaleString("en-NG")}
-                        </span>
-                      </span>
-                    </button>
-                  </li>
-                ))}
+                        <button
+                          className="shrink-0 rounded-lg p-1 text-ink-faint hover:bg-slate-100"
+                          onClick={() => readAlert(a.id)}
+                          aria-label="Mark alert read"
+                        >
+                          <CheckIcon className="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

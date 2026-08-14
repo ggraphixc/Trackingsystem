@@ -8,6 +8,20 @@ import { listDevices } from "@/lib/api";
 import type { PairedDevice } from "@/lib/api";
 import type { Device, Incident } from "@/lib/types";
 import DeviceAlerts from "@/components/device-alerts";
+
+function timeAgo(iso?: string | null): string {
+  if (!iso) return "never";
+  const ms = Date.now() - new Date(iso).getTime();
+  if (ms < 0) return "just now";
+  const min = Math.round(ms / 60000);
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} min ago`;
+  const h = Math.round(min / 60);
+  if (h < 24) return `${h} hour${h === 1 ? "" : "s"} ago`;
+  const d = Math.round(h / 24);
+  return `${d} day${d === 1 ? "" : "s"} ago`;
+}
+
 import {
   ArrowRightIcon,
   CrosshairIcon,
@@ -68,23 +82,51 @@ export default function OverviewPage() {
       {/* Reconnect banner + device activity (shared with the Agents page) */}
       <DeviceAlerts devices={paired} />
 
-      {/* Active recovery incidents — lost devices need eyes on them */}
-      {paired.some((d) => d.lost) ? (
-        <Link
-          href="/dashboard/recovery"
-          className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm transition-colors duration-200 hover:border-red-300 hover:bg-red-100/70"
-        >
-          <span className="flex items-center gap-2.5 font-semibold text-red-700">
-            <span className="relative flex h-2.5 w-2.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-60" />
-              <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-600" />
+      {/* Active recovery cases — lost devices need eyes on them (P6) */}
+      {paired.filter((d) => d.lost).length > 0 ? (
+        <div className="mb-6">
+          <Link
+            href="/dashboard/recovery"
+            className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm transition-colors duration-200 hover:border-red-300 hover:bg-red-100/70"
+          >
+            <span className="flex items-center gap-2.5 font-semibold text-red-700">
+              <span className="relative flex h-2.5 w-2.5">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-red-500 opacity-60" />
+                <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-red-600" />
+              </span>
+              {paired.filter((d) => d.lost).length} device{paired.filter((d) => d.lost).length === 1 ? "" : "s"} in
+              recovery mode
             </span>
-            {paired.filter((d) => d.lost).length} device{paired.filter((d) => d.lost).length === 1 ? "" : "s"} in
-            recovery mode — {paired.filter((d) => d.lost)[0].hostname ?? "a device"}
-            {paired.filter((d) => d.lost).length > 1 ? " and more" : ""}
-          </span>
-          <span className="font-medium text-red-700">Open recovery view →</span>
-        </Link>
+            <span className="font-medium text-red-700">Open recovery view →</span>
+          </Link>
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {paired
+              .filter((d) => d.lost)
+              .slice(0, 6)
+              .map((d) => (
+                <Link key={d.deviceId} href={`/dashboard/recovery/${d.deviceId}`}>
+                  <Card hover className="p-4 ring-1 ring-inset ring-red-400/40">
+                    <div className="flex items-start justify-between gap-2">
+                      <p className="min-w-0 truncate font-semibold text-ink">{d.hostname ?? "Unknown device"}</p>
+                      <span className="chip shrink-0 bg-red-50 text-red-700 ring-1 ring-inset ring-red-600/20">LOST</span>
+                    </div>
+                    <p className="mt-2 font-mono text-[11px] text-ink-faint">
+                      {d.type === "phone" ? `IMEI ${d.imei ?? "—"}` : `Serial ${d.serialNumber ?? "—"}`}
+                    </p>
+                    <p className="mt-2 text-[11px] text-ink-muted">
+                      {d.sightingCount ?? 0} sighting{(d.sightingCount ?? 0) === 1 ? "" : "s"} · last seen{" "}
+                      {d.lastSeenAt
+                        ? timeAgo(d.lastSeenAt)
+                        : "never"}
+                    </p>
+                    <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-primary">
+                      Open recovery case →
+                    </span>
+                  </Card>
+                </Link>
+              ))}
+          </div>
+        </div>
       ) : null}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
